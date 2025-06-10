@@ -1,0 +1,44 @@
+name: Docker Image CI
+
+on:
+  push:
+    branches: [ main ] # Trigger on pushes to the 'main' branch
+  pull_request:
+    branches: [ main ] # Also trigger on pull requests to 'main' (optional, for testing build)
+
+env:
+  DOCKER_HUB_USERNAME: rcvaughn2 # Your Docker Hub username
+  IMAGE_NAME: m3u-epg-checker # The name of your Docker image on Docker Hub
+
+jobs:
+  build_and_push:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_HUB_USERNAME }}
+        password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: |
+          ${{ env.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+          ${{ env.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }} # Tag with commit SHA for specific versions
+        platforms: linux/amd64,linux/arm64 # <-- ADDED: Build for both AMD64 and ARM64 architectures
+
+    - name: Verify pushed image (optional)
+      run: |
+        echo "Image ${{ env.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest pushed successfully!"
+        # To verify multi-arch images, you'd typically use `docker buildx imagetools inspect`
+        # For simplicity, just confirming the push message here.

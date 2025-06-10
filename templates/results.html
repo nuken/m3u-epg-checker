@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Checking Results</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 20px;
+            background-color: #f8f9fa;
+            color: #333;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 900px;
+            margin: 30px auto;
+            background-color: #ffffff;
+            padding: 30px;
+            padding-bottom: 40px; /* Added padding at the bottom */
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        .section-title {
+            color: #0056b3;
+            border-bottom: 2px solid #e9ecef;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+            font-size: 1.8em;
+        }
+        .subsection-title {
+            color: #007bff;
+            margin-top: 25px;
+            margin-bottom: 15px;
+            font-size: 1.4em;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+        }
+        .subsection-title::before {
+            content: '▼';
+            margin-right: 8px;
+            font-size: 0.8em;
+            transition: transform 0.2s ease-in-out;
+        }
+        .subsection-title.collapsed::before {
+            content: '►';
+            transform: rotate(0deg);
+        }
+        
+        /* Scrollable container for lists */
+        .scrollable-list-container {
+            max-height: 300px; /* Max height for the scrollable list */
+            overflow-y: auto;  /* Enable vertical scrolling when content overflows */
+            border: 1px solid #e9ecef; /* Optional: adds a subtle border */
+            padding: 10px;     /* Padding inside the scrollable box */
+            border-radius: 6px;
+            margin-bottom: 15px; /* Add margin below the scrollable container */
+            background-color: #fcfcfc;
+        }
+        /* Styles for the actual lists within the scrollable container */
+        .message-list, .channel-list {
+            list-style-type: none;
+            padding: 0;
+            margin: 0; /* Remove default margins that might add extra space */
+        }
+
+        .message-list li {
+            padding: 8px 0;
+            margin-bottom: 5px;
+            border-radius: 6px;
+            display: flex;
+            align-items: flex-start;
+            word-break: break-word;
+            overflow-wrap: break-word;
+        }
+        .message-list li::before {
+            content: '';
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            margin-right: 10px;
+            flex-shrink: 0;
+        }
+
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .error::before {
+            content: '❌';
+            font-size: 1.2em;
+        }
+
+        .warning {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeeba;
+        }
+        .warning::before {
+            content: '⚠️';
+            font-size: 1.2em;
+        }
+
+        .info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .info::before {
+            content: '💡';
+            font-size: 1.2em;
+        }
+
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            padding: 10px 15px;
+            border-radius: 6px;
+        }
+        .channel-list {
+            list-style-type: disc;
+            padding-left: 20px;
+            margin: 0;
+        }
+        .channel-list li {
+            margin-bottom: 5px;
+        }
+        a {
+            color: #007bff;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        .back-link {
+            display: block;
+            margin-top: 30px;
+            text-align: center;
+        }
+
+        /* Collapsible content styles - Primary changes are here */
+        .collapsible-content {
+            max-height: 0;
+            overflow: hidden; /* Keep this for the transition from 0 */
+            transition: max-height 0.3s ease-out;
+            padding-bottom: 1px; /* Small padding at the very end of hidden section */
+        }
+        .collapsible-content.expanded {
+            max-height: 9999px; /* Make this value practically infinite */
+            overflow-y: auto; /* Allow the entire expanded content to scroll if it exceeds max-height */
+            transition: max-height 0.5s ease-in;
+            /* No need for `overflow: visible;` here if we're putting overflow:auto on expanded.
+               The goal is that if the *combined* content (including inner scrollables) is > 9999px,
+               THIS div scrolls. If individual inner lists are > 300px, THEY scroll. */
+        }
+        /* Ensure inner scrollable containers are not affected by parent's overflow:hidden when expanded */
+        /* This rule is now less critical if .expanded has overflow-y:auto */
+        .collapsible-content.expanded .scrollable-list-container {
+             max-height: 300px; /* Re-apply max-height for inner scrollable containers */
+        }
+        /* Extra small spacing for list items */
+        .message-list li, .channel-list li {
+            padding-bottom: 5px; 
+            margin-bottom: 5px; /* Ensure consistent spacing */
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="section-title">M3U/EPG File Checking Results</h1>
+
+        <h2 class="section-title">M3U/EPG Compatibility Checks</h2>
+        {% if m3u_epg_compat_issues %}
+            <div class="scrollable-list-container">
+                <ul class="message-list">
+                    {% for issue in m3u_epg_compat_issues %}
+                        {% if "Error:" in issue %}
+                            <li class="error">{{ issue }}</li>
+                        {% elif "Warning:" in issue %}
+                            <li class="warning">{{ issue }}</li>
+                        {% elif "Note:" in issue %}
+                            <li class="info">{{ issue }}</li>
+                        {% else %}
+                            <li class="info">{{ issue }}</li>
+                        {% endif %}
+                    {% endfor %}
+                </ul>
+            </div>
+        {% else %}
+            <p class="success">✅ No specific M3U/EPG compatibility issues detected.</p>
+        {% endif %}
+
+        <h3 class="subsection-title" style="margin-top: 30px;">Channels DVR Setup Advice & Best Practices:</h3>
+        {% if channels_dvr_advice %}
+            <div class="scrollable-list-container">
+                <ul class="message-list">
+                    {% for advice_item in channels_dvr_advice %}
+                        <li class="info">{{ advice_item }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        {% else %}
+            <p class="success">No specific Channels DVR setup advice at this time (often appears when files are missing, or general compatibility notes are given).</p>
+        {% endif %}
+
+        <hr>
+
+        {% if fixed_m3u_content and m3u_fix_suggestions_count > 0 %}
+            <hr>
+            <h2 class="section-title">Automated M3U Fixes (Beta)</h2>
+            <p class="info">
+                💡 **Beta Feature:** The following is a proposed corrected version of your M3U file based on detected issues.
+                **Please review it carefully before using it!** It may not perfectly address all edge cases.
+            </p>
+            <div style="background-color: #f0f0f0; border: 1px dashed #ccc; padding: 15px; margin-bottom: 15px; border-radius: 8px;">
+                <h4 style="margin-top: 0;">Fixed M3U Content Preview:</h4>
+                <pre style="white-space: pre-wrap; word-wrap: break-word; max-height: 300px; overflow-y: auto; background-color: #ffffff; padding: 10px; border: 1px solid #eee; border-radius: 5px;">{{ fixed_m3u_content }}</pre>
+                <form action="/download_fixed_m3u" method="post" style="margin-top: 15px;">
+                    <input type="hidden" name="original_m3u_content" value="{{ original_m3u_content }}">
+                    <input type="hidden" name="fix_suggestions_json" value="{{ m3u_fix_suggestions_json }}">
+                    <button type="submit" style="padding: 10px 15px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer;">
+                        Download Fixed M3U (.m3u)
+                    </button>
+                </form>
+            </div>
+        {% elif m3u_fix_suggestions_count == 0 and original_m3u_content %}
+            <p class="success">✅ No automated M3U fixes suggested at this time.</p>
+        {% endif %}
+
+        <hr>
+
+        <h2 class="subsection-title collapsed" onclick="toggleCollapse(this)">M3U Playlist Analysis</h2>
+        <div class="collapsible-content">
+            {% if m3u_errors %}
+                <div class="scrollable-list-container">
+                    <ul class="message-list">
+                        {% for error in m3u_errors %}
+                            {% if "Error:" in error %}
+                                <li class="error">{{ error }}</li>
+                            {% elif "Warning:" in error %}
+                                <li class="warning">{{ error }}</li>
+                            {% elif "Suggestion:" in error %}
+                                <li class="info">{{ error }}</li>
+                            {% else %}
+                                <li class="info">{{ error }}</li>
+                            {% endif %}
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% else %}
+                <p class="success">✅ No major issues detected in your M3U playlist file.</p>
+            {% endif %}
+
+            <h3 class="subsection-title" style="margin-top: 30px;">Detected M3U Channels (for reference):</h3>
+            {% if m3u_channels %}
+                <div class="scrollable-list-container">
+                    <ul class="channel-list">
+                        {% for channel in m3u_channels %}
+                            <li>
+                                <strong>Name:</strong> {{ channel.name | default('N/A') }}
+                                {% if channel.tvg_id %}(ID: {{ channel.tvg_id }}){% endif %}
+                                {% if channel.group_title %}[Group: {{ channel.group_title }}]{% endif %}
+                                {% if channel.stream_url %} - <a href="{{ channel.stream_url }}" target="_blank" title="Test Stream URL">Stream Link</a>{% endif %}
+                            </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% else %}
+                <p>No channels were detected in your M3U file, or the file was not uploaded/processed.</p>
+            {% endif %}
+        </div>
+
+        <hr>
+
+        <h2 class="subsection-title collapsed" onclick="toggleCollapse(this)">EPG XMLTV Analysis</h2>
+        <div class="collapsible-content">
+            {% if epg_errors %}
+                <div class="scrollable-list-container">
+                    <ul class="message-list">
+                        {% for error in epg_errors %}
+                            {% if "Error:" in error %}
+                                <li class="error">{{ error }}</li>
+                            {% elif "Warning:" in error %}
+                                <li class="warning">{{ error }}</li>
+                            {% elif "Suggestion:" in error %}
+                                <li class="info">{{ error }}</li>
+                            {% else %}
+                                <li class="info">{{ error }}</li>
+                            {% endif %}
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% else %}
+                <p class="success">✅ No major issues detected in your EPG XMLTV file.</p>
+            {% endif %}
+
+            <h3 class="subsection-title" style="margin-top: 30px;">Detected EPG Channels (for reference):</h3>
+            {% if epg_channels %}
+                <div class="scrollable-list-container">
+                    <ul class="channel-list">
+                        {% for id, channel in epg_channels.items() %}
+                            <li>
+                                <strong>ID:</strong> {{ id | default('N/A') }}
+                                {% if channel.display_names %} - <strong>Display Names:</strong> {{ ', '.join(channel.display_names) }}{% endif %}
+                                {% if channel.icon %} - <a href="{{ channel.icon }}" target="_blank" title="View Icon">Icon Link</a>{% endif %}
+                            </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% else %}
+                <p>No channels were detected in your EPG file, or the file was not uploaded/processed.</p>
+            {% endif %}
+        </div>
+
+        <div class="back-link">
+            <a href="/">&#x2190; Upload new files</a>
+        </div>
+    </div>
+
+    <script>
+        function toggleCollapse(header) {
+            header.classList.toggle('collapsed');
+            const content = header.nextElementSibling;
+            if (content.classList.contains('expanded')) {
+                content.classList.remove('expanded');
+            } else {
+                content.classList.add('expanded');
+            }
+        }
+    </script>
+</body>
+</html>

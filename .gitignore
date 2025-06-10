@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+.tox/
+dist/
+build/
+*.egg
+
+# Flask
+.flaskenv
+
+# Docker
+.dockerignore # Often useful, but not strictly necessary if .gitignore handles all needed
+docker-compose.yml # If you use it for local dev but don't want to commit specific configs
+# Docker build cache directories
+.docker/
+tmp/
+
+# IDEs
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS generated files
+.DS_Store
+.Trash/
+Thumbs.db
