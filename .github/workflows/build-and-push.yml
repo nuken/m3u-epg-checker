@@ -2,9 +2,9 @@ name: Build and Push Docker Image to Docker Hub
 
 on:
   push:
-    branches: [ "main" ] # Trigger on pushes to the 'main' branch
+    branches: [ "master" ] # Trigger on pushes to the 'main' branch
   pull_request:
-    branches: [ "main" ] # Also trigger on pull requests to 'main' (optional, for testing build)
+    branches: [ "master" ] # Also trigger on pull requests to 'main' (optional, for testing build)
 
 env:
   DOCKER_IMAGE_NAME: m3u-epg-checker
