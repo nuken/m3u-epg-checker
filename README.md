@@ -71,7 +71,7 @@ These instructions will get you a copy of the project up and running on your loc
 ### Cloning the Repository
 
 ```bash
-git clone https://github.com/your-username/m3u-epg-checker.git
+git clone https://github.com/nuken/m3u-epg-checker.git
 cd m3u-epg-checker
 ```
 
