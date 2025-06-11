@@ -2,18 +2,19 @@ name: Build and Push Docker Image to Docker Hub
 
 on:
   push:
-    branches: [ "master" ] 
-    branches: [ "master" ] 
+    branches: [ "master" ] # Trigger on pushes to the 'main' branch
+  pull_request:
+    branches: [ "master" ] # Also trigger on pull requests to 'main' (optional, for testing build)
 
 env:
-  DOCKER_IMAGE_NAME: m3u-epg-checker 
+  DOCKER_IMAGE_NAME: m3u-epg-checker
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write 
+      packages: write # Needed for pushing packages (even to Docker Hub sometimes)
 
     steps:
     - name: Checkout repository
@@ -25,12 +26,12 @@ jobs:
         username: ${{ secrets.DOCKER_HUB_USERNAME }}
         password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
-    - name: Set up QEMU
+    - name: Set up QEMU # Required for cross-platform emulation during build
       uses: docker/setup-qemu-action@v3
       with:
-        platforms: all
+        platforms: all # Enable emulation for all supported platforms
 
-    - name: Set up Docker Buildx 
+    - name: Set up Docker Buildx # Buildx is essential for multi-platform builds
       uses: docker/setup-buildx-action@v3
 
     - name: Build and push Multi-Arch Docker image
@@ -38,11 +39,10 @@ jobs:
       with:
         context: .
         push: true
-        platforms: linux/amd64,linux/arm64/v8 
-        tags: |
+        platforms: linux/amd64,linux/arm64/v8 # Build for both Intel/AMD and ARM
+        tags: | # Use multiline for multiple tags
           ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest
-          ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }} # Removed comment from this line
-        
+          ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }} # Tag with commit SHA for specific versions
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
