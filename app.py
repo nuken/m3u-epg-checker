@@ -608,4 +608,4 @@ def download_fixed_m3u():
 
 if __name__ == '__main__':
     # Set a more appropriate host for Docker deployment
-    app.run(debug=True, host='0.0.0.0')
+    app.run(debug=False, host='0.0.0.0')
