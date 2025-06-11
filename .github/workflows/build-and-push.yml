@@ -7,7 +7,7 @@ on:
     branches: [ "master" ] # Or "main"
 
 env:
-  DOCKER_IMAGE_NAME: m3u-epg-checker # Your Docker Hub repository name
+  DOCKER_IMAGE_NAME: m3u-epg-checker # The name of your Docker image on Docker Hub
 
 jobs:
   build-and-push:
@@ -40,10 +40,10 @@ jobs:
         context: .
         push: true
         platforms: linux/amd64,linux/arm64/v8 # Build for both Intel/AMD and ARM
-        tags: |
-          ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest
-          ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }} # Removed comment from this line
-        # Tag with commit SHA for specific versions (comment moved here)
+        # FIX: Use explicit YAML list syntax for tags to correctly handle comments
+        tags:
+          - ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest
+          - ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }} # This comment is now correctly ignored
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
