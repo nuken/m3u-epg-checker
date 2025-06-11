@@ -1,54 +1,71 @@
-name: Build and Push Docker Image to Docker Hub
+# Indentation Guide:
+# - Level 0: Starts at column 1
+#   name: ...
+# - Level 1: Indented by 2 spaces from Level 0
+#   on:
+#     push:
+# - Level 2: Indented by 2 spaces from Level 1
+#     branches: [ "master" ]
+# - Level 3: Indented by 2 spaces from Level 2 (e.g., for `jobs:` and its children)
+#       runs-on: ...
+# - Level 4: Indented by 2 spaces from Level 3 (e.g., for `steps:` and its children)
+#         - name: ...
+# - Level 5: Indented by 2 spaces from Level 4 (e.g., for `uses:` or `with:`)
+#           uses: ...
+# - Level 6: Indented by 2 spaces from Level 5 (for children of `with:`, like `context:`, `tags:`)
+#             context: ...
+#             tags:
+# - Level 7: Indented by 2 spaces from Level 6 (for list items under `tags:`)
+#               - ...
 
-on:
-  push:
-    branches: [ "master" ] # Or "main" if you changed your branch name
-  pull_request:
-    branches: [ "master" ] # Or "main"
+name: Build and Push Docker Image to Docker Hub # Level 0
 
-env:
-  DOCKER_IMAGE_NAME: m3u-epg-checker # The name of your Docker image on Docker Hub
+on: # Level 1
+  push: # Level 2
+    branches: [ "master" ] # Level 3 (Ensure your default branch is indeed "master")
+  pull_request: # Level 2
+    branches: [ "master" ] # Level 3
 
-jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write # Needed for pushing packages (even to Docker Hub sometimes)
+env: # Level 1
+  DOCKER_IMAGE_NAME: m3u-epg-checker # Level 2
 
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+jobs: # Level 1
+  build-and-push: # Level 2
+    runs-on: ubuntu-latest # Level 3
+    permissions: # Level 3
+      contents: read # Level 4
+      packages: write # Level 4
 
-    - name: Log in to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKER_HUB_USERNAME }}
-        password: ${{ secrets.DOCKER_HUB_TOKEN }}
+    steps: # Level 3
+    - name: Checkout repository # Level 4
+      uses: actions/checkout@v4 # Level 5
 
-    - name: Set up QEMU # Required for cross-platform emulation during build
-      uses: docker/setup-qemu-action@v3
-      with:
-        platforms: all # Enable emulation for all supported platforms
+    - name: Log in to Docker Hub # Level 4
+      uses: docker/login-action@v3 # Level 5
+      with: # Level 6
+        username: ${{ secrets.DOCKER_HUB_USERNAME }} # Level 7
+        password: ${{ secrets.DOCKER_HUB_TOKEN }} # Level 7
 
-    - name: Set up Docker Buildx # Buildx is essential for multi-platform builds
-      uses: docker/setup-buildx-action@v3
+    - name: Set up QEMU # Level 4
+      uses: docker/setup-qemu-action@v3 # Level 5
+      with: # Level 6
+        platforms: all # Level 7
 
-    - name: Build and push Multi-Arch Docker image
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        push: true
-        platforms: linux/amd64,linux/arm64/v8 # Build for both Intel/AMD and ARM
-        # FIX: Use explicit YAML list syntax for tags to correctly handle comments
-        tags:
-          - ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest
-          - ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }} # This comment is now correctly ignored
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+    - name: Set up Docker Buildx # Level 4
+      uses: docker/setup-buildx-action@v3 # Level 5
 
-    - name: Verify pushed image (optional)
-      run: |
-        echo "Image ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest and ${{ github.sha }} tags pushed successfully!"
-        # To verify multi-arch images, you'd typically use `docker buildx imagetools inspect`
-        # For simplicity, just confirming the push message here.
+    - name: Build and push Multi-Arch Docker image # Level 4
+      uses: docker/build-push-action@v5 # Level 5
+      with: # Level 6 (This line MUST be exactly at Col 9 relative to start of file)
+        context: . # Level 7 (This line MUST be exactly at Col 11)
+        push: true # Level 7
+        platforms: linux/amd64,linux/arm64/v8 # Level 7
+        tags: # Level 7 (This line MUST be exactly at Col 11)
+          - ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest # Level 8 (This line MUST be exactly at Col 13)
+          - ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }} # Level 8 (This line MUST be exactly at Col 13)
+        cache-from: type=gha # Level 7
+        cache-to: type=gha,mode=max # Level 7
+
+    - name: Verify pushed image (optional) # Level 4
+      run: | # Level 5
+        echo "Image ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest and ${{ github.sha }} tags pushed successfully!" # Level 6
