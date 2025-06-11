@@ -2,12 +2,12 @@ name: Build and Push Docker Image to Docker Hub
 
 on:
   push:
-    branches: [ "main" ] # Trigger on pushes to the 'main' branch
+    branches: [ "master" ] # Or "main" if you changed your branch name
   pull_request:
-    branches: [ "main" ] # Also trigger on pull requests to 'main' (optional, for testing build)
+    branches: [ "master" ] # Or "main"
 
 env:
-  DOCKER_IMAGE_NAME: m3u-epg-checker
+  DOCKER_IMAGE_NAME: m3u-epg-checker # Your Docker Hub repository name
 
 jobs:
   build-and-push:
@@ -40,9 +40,10 @@ jobs:
         context: .
         push: true
         platforms: linux/amd64,linux/arm64/v8 # Build for both Intel/AMD and ARM
-        tags: | # Use multiline for multiple tags
+        tags: |
           ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest
-          ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }} # Tag with commit SHA for specific versions
+          ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }} # Removed comment from this line
+        # Tag with commit SHA for specific versions (comment moved here)
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
