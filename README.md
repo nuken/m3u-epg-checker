@@ -49,6 +49,7 @@ Running the Docker Container
 Bash
 
 docker run -d --restart unless-stopped --name m3u-epg-checker -p 5000:5000 rcvaughn2/m3u-epg-checker
+
 Let's break down this command:
 
 -d: Runs the container in detached mode, meaning it runs in the background.
