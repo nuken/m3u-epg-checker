@@ -7,7 +7,7 @@ on:
     branches: [ "main" ] # Also trigger on pull requests to 'main' (optional, for testing build)
 
 env:
-  DOCKER_IMAGE_NAME: m3u-epg-checker # Your Docker Hub repository name
+  DOCKER_IMAGE_NAME: m3u-epg-checker
 
 jobs:
   build-and-push:
