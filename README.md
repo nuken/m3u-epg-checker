@@ -1,6 +1,5 @@
 Dockerized M3U/EPG File Checker
 
-
 A powerful and user-friendly web tool to validate, troubleshoot, and suggest automated fixes for M3U playlists and XMLTV EPG (Electronic Program Guide) files, with a strong focus on compatibility with Channels DVR.
 
 About the Project
