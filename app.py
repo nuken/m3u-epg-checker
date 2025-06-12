@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template, redirect, url_for, send_file
+from flask import Flask, request, render_template, redirect, url_for, send_file, abort
 import re
 from lxml import etree
 import requests
@@ -6,8 +6,17 @@ from datetime import datetime, timedelta
 import io # For in-memory file for download
 from markupsafe import escape # For escaping HTML in Jinja2 templates
 import json # For serializing fix suggestions to JSON
+import uuid # For generating unique IDs
 
 app = Flask(__name__)
+
+# --- Temporary storage for fixed files ---
+# In a production environment with multiple workers or servers,
+# this would need to be a more robust solution like a database,
+# Redis, or temporary file storage with cleanup.
+# For this simple Flask app, an in-memory dictionary is sufficient
+# but will clear on server restart.
+app.temp_fixed_files = {} # Stores {file_id: bytes_content}
 
 # --- Helper function for fetching content ---
 def fetch_content(source_type, source_value):
@@ -219,7 +228,7 @@ def check_m3u(file_content):
 def parse_xmltv_datetime(dt_str):
     """Parses XMLTV datetime string (YYYYMMDDHHMMSS +/-ZZZZ) into datetime object."""
     try:
-        match = re.match(r'(\d{14})\s*([+-]\d{4})?', dt_str) #
+        match = re.match(r'(\d{14})\s*([+-]\d{4})?', dt_str)
         if match:
             dt_part = match.group(1)
             dt_obj = datetime.strptime(dt_part, '%Y%m%d%H%M%S')
@@ -234,9 +243,9 @@ def check_epg(file_content):
     Returns (list_of_errors, dict_of_channels, list_of_programs).
     """
     errors = []
-    channels = {} # To store channel data
-    programs_by_channel = {} # To store program data, grouped by channel_id for overlap checks
-    all_program_data = [] # For general reference if needed elsewhere (simplified)
+    channels = {}
+    programs_by_channel = {}
+    all_program_data = []
 
     try:
         root = etree.fromstring(file_content.encode('utf-8'))
@@ -300,22 +309,22 @@ def check_epg(file_content):
                  program_errors_local.append(f"Start time ({start_time_str}) is equal to or after stop time ({stop_time_str}).")
 
 
-            title_elements = program_element.findall('title') #
-            if not title_elements or not any(t.text for t in title_elements): #
+            title_elements = program_element.findall('title')
+            if not title_elements or not any(t.text for t in title_elements):
                 program_errors_local.append("Missing 'title'. Essential for guide display.")
 
-            description_elements = program_element.findall('desc') #
-            if not description_elements or not any(d.text for d in description_elements): #
+            description_elements = program_element.findall('desc')
+            if not description_elements or not any(d.text for d in description_elements):
                 program_errors_local.append("Suggestion: Missing 'desc' (description). Adds rich info to guide.")
 
-            category_elements = program_element.findall('category') #
-            is_movie = any(c.text and c.text.lower() == 'movie' for c in category_elements) #
+            category_elements = program_element.findall('category')
+            is_movie = any(c.text and c.text.lower() == 'movie' for c in category_elements)
 
             series_id_attr = program_element.get('series-id')
             if not series_id_attr and not is_movie: # Only suggest for non-movies
                 program_errors_local.append("Suggestion: Missing 'series-id'. Crucial for grouping TV show recordings.")
 
-            episode_num_elements = program_element.findall('episode-num') #
+            episode_num_elements = program_element.findall('episode-num')
             if (not episode_num_elements or not any(e.text for e in episode_num_elements)) and not is_movie: # Only suggest for non-movies
                 program_errors_local.append("Suggestion: Missing 'episode-num'. Helps uniquely identify episodes.")
 
@@ -417,8 +426,8 @@ def check_m3u_epg_compatibility(m3u_channels, epg_channels):
 
     return compatibility_issues, channels_dvr_advice
 
-# --- NEW: Helper to format attributes ---
-def format_attributes_for_extinf(attributes_dict): #
+# --- Helper to format attributes ---
+def format_attributes_for_extinf(attributes_dict):
     """Formats a dictionary of attributes into a string for EXTINF line."""
     formatted_attrs = []
     # Sort keys for consistent output order (optional but good for diffing)
@@ -428,8 +437,9 @@ def format_attributes_for_extinf(attributes_dict): #
             formatted_attrs.append(f'{key}="{value}"')
     return " ".join(formatted_attrs)
 
-# --- NEW: Function to apply M3U fixes ---
-def apply_m3u_fixes(original_content, fix_suggestions): #
+
+# --- Function to apply M3U fixes ---
+def apply_m3u_fixes(original_content, fix_suggestions):
     """
     Applies a list of fix suggestions to the original M3U content to generate a fixed version.
     Fixes are applied in reverse order of line number to prevent index shifting issues.
@@ -446,20 +456,20 @@ def apply_m3u_fixes(original_content, fix_suggestions): #
         line_idx = fix['line_num'] - 1 # Convert to 0-indexed for list access
 
         if line_idx < 0 or line_idx >= len(fixed_lines_array):
-            app.logger.warning(f"Attempted to apply fix at invalid line index {line_idx}. Skipping fix: {fix}") #
+            app.logger.warning(f"Attempted to apply fix at invalid line index {line_idx}. Skipping fix: {fix}")
             continue
 
-        if fix_type == 'rebuild_extinf_attributes': #
+        if fix_type == 'rebuild_extinf_attributes':
             # This fix type indicates that the EXTINF line's attributes need to be reconstructed.
             duration = fix['duration']
             channel_name = fix['channel_name']
             final_attributes = fix['final_attributes'] # This dict contains the desired state of attributes
 
-            new_attributes_str = format_attributes_for_extinf(final_attributes) #
+            new_attributes_str = format_attributes_for_extinf(final_attributes)
             new_extinf_line_content = f'#EXTINF:{duration} {new_attributes_str},{channel_name}'
             fixed_lines_array[line_idx] = new_extinf_line_content + "\n" # Replace and retain newline
 
-        elif fix_type == 'reorder_stream_url': #
+        elif fix_type == 'reorder_stream_url':
             extinf_line_idx = fix['line_num'] - 1
             original_stream_line_idx = fix['original_stream_line_num'] - 1
             stream_url = fix['stream_url'] # This `stream_url` from check_m3u does NOT contain a newline
@@ -504,9 +514,9 @@ def upload_file():
     epg_url = request.form.get('epg_url')
 
     m3u_content = None
-    m3u_errors = [] # Initialize as an empty list
+    m3u_errors = []
     epg_content = None
-    epg_errors = [] # Initialize as an empty list
+    epg_errors = []
 
     # Determine M3U source and fetch content
     if m3u_file and m3u_file.filename:
@@ -544,8 +554,9 @@ def upload_file():
     m3u_epg_compat_issues = []
     channels_dvr_advice = []
 
-    m3u_fix_suggestions = [] # New list for M3U fix suggestions
-    fixed_m3u_content = None # Initialize as None
+    m3u_fix_suggestions = []
+    fixed_m3u_content = None
+    fixed_file_id = None # Initialize file ID
 
     # Only run M3U analysis if content was successfully fetched
     if m3u_content:
@@ -555,6 +566,9 @@ def upload_file():
         # Now apply fixes if suggestions exist
         if m3u_fix_suggestions:
             fixed_m3u_content = apply_m3u_fixes(m3u_content, m3u_fix_suggestions)
+            # Store fixed content temporarily and generate an ID
+            fixed_file_id = str(uuid.uuid4())
+            app.temp_fixed_files[fixed_file_id] = fixed_m3u_content.encode('utf-8')
         else:
             fixed_m3u_content = None # No fixes to apply
 
@@ -574,14 +588,6 @@ def upload_file():
         m3u_epg_compat_issues.append("Compatibility Note: No M3U file or valid M3U URL was provided.")
         channels_dvr_advice.append("EPG data alone is not sufficient for Channels DVR; it needs to be linked to channels in a playlist (via `tvg-id`).")
 
-    # Convert fix_suggestions to JSON string for passing to template (for download)
-    m3u_fix_suggestions_json = json.dumps(m3u_fix_suggestions)
-
-    # Escape m3u_content for HTML (important if original_m3u_content is passed in hidden field)
-    # Using escape() is critical if content might contain HTML-like characters
-    m3u_content_escaped = escape(m3u_content) if m3u_content else ""
-
-
     return render_template('results.html',
                            m3u_errors=m3u_errors,
                            epg_errors=epg_errors,
@@ -589,37 +595,25 @@ def upload_file():
                            epg_channels=epg_channels_data,
                            m3u_epg_compat_issues=m3u_epg_compat_issues,
                            channels_dvr_advice=channels_dvr_advice,
-                           fixed_m3u_content=fixed_m3u_content,
+                           fixed_m3u_content=fixed_m3u_content, # For display in <pre> tag
                            m3u_fix_suggestions_count=len(m3u_fix_suggestions),
-                           # Pass original M3U content and fix suggestions for download route
-                           original_m3u_content=m3u_content_escaped,
-                           m3u_fix_suggestions_json=m3u_fix_suggestions_json
+                           fixed_file_id=fixed_file_id # Pass the file ID for download
                            )
 
 # --- Download route for fixed M3U ---
-@app.route('/download_fixed_m3u', methods=['POST'])
-def download_fixed_m3u(): #
+@app.route('/download_fixed_m3u/<file_id>', methods=['GET'])
+def download_fixed_m3u(file_id):
     """
-    Handles the download of the fixed M3U file. Re-applies fixes for robustness.
+    Handles the download of the fixed M3U file using a unique ID.
     """
-    original_m3u_content_for_download = request.form.get('original_m3u_content')
-    fix_suggestions_json = request.form.get('fix_suggestions_json')
+    fixed_content_bytes = app.temp_fixed_files.get(file_id)
 
-    if not original_m3u_content_for_download or not fix_suggestions_json:
-        return "Error: Missing data for download. Please go back and try again.", 400
+    if fixed_content_bytes is None:
+        app.logger.error(f"Attempted to download non-existent file_id: {file_id}")
+        return abort(404, description="File not found or expired.")
 
     try:
-        # Unescape original_m3u_content if it was escaped by markupsafe.escape
-        # `escape` replaces characters like & with &amp;. `unescape` reverses this.
-        from html import unescape # Python's built-in unescape
-        original_content_unescaped = unescape(original_m3u_content_for_download)
-
-        # Convert fix_suggestions_json back to Python list of dicts
-        fix_suggestions_for_download = json.loads(fix_suggestions_json)
-
-        fixed_content = apply_m3u_fixes(original_content_unescaped, fix_suggestions_for_download) #
-
-        buffer = io.BytesIO(fixed_content.encode('utf-8'))
+        buffer = io.BytesIO(fixed_content_bytes)
         buffer.seek(0)
         return send_file(
             buffer,
@@ -627,11 +621,8 @@ def download_fixed_m3u(): #
             as_attachment=True,
             download_name='fixed_playlist.m3u' # Suggested filename for download
         )
-    except json.JSONDecodeError:
-        app.logger.error("Failed to decode fix_suggestions_json for download.") #
-        return "Error: Invalid fix data for download.", 500
     except Exception as e:
-        app.logger.error(f"An error occurred while generating fixed M3U for download: {e}") #
+        app.logger.error(f"An internal error occurred while generating the fixed file for download (ID: {file_id}): {e}")
         return f"An internal error occurred while generating the fixed file: {e}", 500
 
 

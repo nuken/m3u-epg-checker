@@ -48,7 +48,7 @@
             content: '►';
             transform: rotate(0deg);
         }
-        
+
         /* Scrollable container for lists */
         .scrollable-list-container {
             max-height: 300px; /* Max height for the scrollable list */
@@ -164,7 +164,7 @@
         }
         /* Extra small spacing for list items */
         .message-list li, .channel-list li {
-            padding-bottom: 5px; 
+            padding-bottom: 5px;
             margin-bottom: 5px; /* Ensure consistent spacing */
         }
     </style>
@@ -219,15 +219,19 @@
             <div style="background-color: #f0f0f0; border: 1px dashed #ccc; padding: 15px; margin-bottom: 15px; border-radius: 8px;">
                 <h4 style="margin-top: 0;">Fixed M3U Content Preview:</h4>
                 <pre style="white-space: pre-wrap; word-wrap: break-word; max-height: 300px; overflow-y: auto; background-color: #ffffff; padding: 10px; border: 1px solid #eee; border-radius: 5px;">{{ fixed_m3u_content }}</pre>
-                <form action="/download_fixed_m3u" method="post" style="margin-top: 15px;">
-                    <input type="hidden" name="original_m3u_content" value="{{ original_m3u_content }}">
-                    <input type="hidden" name="fix_suggestions_json" value="{{ m3u_fix_suggestions_json }}">
-                    <button type="submit" style="padding: 10px 15px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer;">
+
+                {% if fixed_file_id %}
+                <div style="margin-top: 15px;">
+                    <a href="{{ url_for('download_fixed_m3u', file_id=fixed_file_id) }}"
+                       style="padding: 10px 15px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; text-decoration: none; display: inline-block;">
                         Download Fixed M3U (.m3u)
-                    </button>
-                </form>
+                    </a>
+                </div>
+                {% else %}
+                    <p class="info" style="margin-top: 15px;">No fixed file available for download (e.g., no fixes applied or an error occurred).</p>
+                {% endif %}
             </div>
-        {% elif m3u_fix_suggestions_count == 0 and original_m3u_content %}
+        {% elif m3u_fix_suggestions_count == 0 and fixed_m3u_content %} {# Check fixed_m3u_content, not original_m3u_content #}
             <p class="success">✅ No automated M3U fixes suggested at this time.</p>
         {% endif %}
 
