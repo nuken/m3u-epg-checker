@@ -149,6 +149,7 @@ def check_m3u(file_content, mode='advanced'):
         line_num_display = i + 1
         line = lines[i].strip()
         
+        # Skip empty lines, but only if they are not expected to be a stream URL.
         if not line and not (i > 0 and lines[i-1].strip().startswith('#EXTINF:')):
             i += 1
             continue
@@ -156,18 +157,19 @@ def check_m3u(file_content, mode='advanced'):
         if line.startswith('#EXTINF:'):
             channel_count += 1
             
-            # --- THE CRITICAL REGEX FIX FOR EXTINF LINE PARSING ---
-            # This regex correctly separates attributes from the final channel name (after the last comma),
-            # even if the channel name (after the last comma) itself contains internal commas or quotes.
-            # Breakdown:
-            # - `(-?\d+)`: Duration (group 1)
-            # - `\s*`: Whitespace
-            # - `(.*?)`: Non-greedy match for attributes string (group 2). This captures everything up to the last comma.
-            # - `,(?=[^,]*$)`: Lookahead for a comma that's followed by
-            #   an even number of quotes until the end of the line. This implies it's not
-            #   inside a quoted string, making it the "last significant comma".
-            # - `(.*)`: The rest of the line as raw_channel_name (group 3)
-            match = re.search(r'#EXTINF:(-?\d+)\s*(.*?),([^,]*)$', line)
+            # --- REVERTED TO A MORE ROBUST REGEX FOR EXTINF LINE PARSING ---
+            # This regex splits the line into duration, attributes string, and raw channel name
+            # by looking for the FIRST comma after the duration and attributes.
+            # This is generally more stable for common M3U variations.
+            # `(-?\d+)`: Duration (group 1)
+            # `\s*`: Optional whitespace
+            # `([^,]*?)`: Non-greedy match for attributes (group 2). This captures up to the FIRST comma.
+            # `,`: The comma separator
+            # `(.*)`: The rest of the line as raw_channel_name (group 3)
+            # NOTE: If an attribute VALUE itself contains an unescaped comma before the "real" channel name comma,
+            # this regex will incorrectly split `attributes_str`. This is a common M3U parsing challenge.
+            # However, it's more stable than the previous complex regex for the overall line structure.
+            match = re.search(r'#EXTINF:(-?\d+)\s*([^,]*),(.*)', line)
             
             if not match:
                 errors.append(f"M3U Error: Malformed EXTINF line (Line {line_num_display}): {line}. Expected '#EXTINF:<duration> [attributes],<channel name>'")
@@ -216,24 +218,27 @@ def check_m3u(file_content, mode='advanced'):
             # --- Advanced Mode Specific Checks & Fixes ---
             if mode == 'advanced':
                 # Suggestion 2: Missing or incorrect tvg-name
-                # The condition is now:
+                # Conditions for suggesting a tvg-name fix:
                 # 1. tvg-name attribute is completely missing (empty string).
                 # OR
                 # 2. tvg-name attribute exists, but its value is different from our suggested_display_name,
-                #    AND our suggested_display_name is not empty/generic,
-                #    AND the existing tvg-name attribute looks "bad" (e.g., purely numeric, very long, contains internal commas/quotes).
+                #    AND our suggested_display_name is valid (not "Unknown Channel"),
+                #    AND the existing tvg-name attribute looks "bad" (e.g., purely numeric, very long, contains internal commas/quotes/descriptions).
                 
                 is_existing_tvg_name_potentially_bad = (
                     re.fullmatch(r'\d+', tvg_name_from_attrs) is not None or # Purely numeric (like "115455")
                     len(tvg_name_from_attrs) > 50 or # Excessively long
                     ',' in tvg_name_from_attrs or # Contains an internal comma
-                    '\"' in tvg_name_from_attrs or '\'' in tvg_name_from_attrs # Contains internal quotes
+                    '\"' in tvg_name_from_attrs or '\'' in tvg_name_from_attrs or # Contains internal quotes
+                    re.search(r'\s+--\s+.*$', tvg_name_from_attrs) is not None or # Contains common description separator
+                    re.search(r'\s*:\s+.*$', tvg_name_from_attrs) is not None or # Contains common description separator
+                    re.search(r'\s*\([^\)]*\)$', tvg_name_from_attrs) is not None # Contains parentheses (like "(HD)" or "(Description)")
                 )
 
                 if not tvg_name_from_attrs or \
                    (tvg_name_from_attrs != suggested_display_name and 
-                    suggested_display_name != "Unknown Channel" and # Ensure suggested name is good
-                    is_existing_tvg_name_potentially_bad): # And existing one is actually bad
+                    suggested_display_name != "Unknown Channel" and 
+                    is_existing_tvg_name_potentially_bad):
                     
                     current_line_attributes['tvg-name'] = suggested_display_name
                     modified_attributes_for_fix = True
@@ -262,7 +267,7 @@ def check_m3u(file_content, mode='advanced'):
             current_tvg_id_for_checks = current_line_attributes.get('tvg-id', '').strip()
 
             if current_tvg_id_for_checks:
-                if current_tvg_for_checks in tvg_id_map:
+                if current_tvg_id_for_checks in tvg_id_map: # Fixed typo: changed tvg_for_checks to current_tvg_id_for_checks
                     errors.append(f"M3U Channels DVR Warning: Duplicate 'tvg-id' '{current_tvg_id_for_checks}' found for channel '{raw_channel_name_after_comma}' (Line {line_num_display}). Previous at line(s): {', '.join(map(str, tvg_id_map[current_tvg_id_for_checks]))}. Channels DVR may only import one instance.")
                     tvg_id_map[current_tvg_id_for_checks].append(line_num_display)
                 else:
