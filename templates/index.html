@@ -31,7 +31,8 @@
             color: #555;
         }
         .input-group input[type="file"],
-        .input-group input[type="text"] {
+        .input-group input[type="text"],
+        .input-group textarea { /* Added textarea to styles */
             width: calc(100% - 20px);
             padding: 10px;
             margin-top: 5px;
@@ -40,10 +41,15 @@
             box-sizing: border-box;
             font-size: 1em;
         }
+        .input-group textarea {
+            min-height: 150px; /* Make text area taller */
+            resize: vertical; /* Allow vertical resizing */
+        }
         .input-group p.note {
             font-size: 0.85em;
             color: #777;
             margin-top: 5px;
+            margin-bottom: 10px; /* Added margin-bottom for better spacing */
         }
         input[type="submit"] {
             padding: 12px 25px;
@@ -73,27 +79,33 @@
     <div class="container">
         <h1>M3U/EPG File Checker</h1>
         <p class="disclaimer">
-            This tool helps you check your M3U playlist and EPG XMLTV files for common errors and compatibility with Channels DVR requirements. You can either upload files directly or provide public URLs.
+            This tool helps you check your M3U playlist and EPG XMLTV files for common errors and compatibility with Channels DVR requirements. You can either upload files, provide public URLs, or paste text data directly.
         </p>
         <form action="/upload" method="post" enctype="multipart/form-data">
             <h2>Provide your M3U Playlist:</h2>
             <div class="input-group">
+                <label for="m3u_text_data">Paste M3U Text Data:</label>
+                <textarea id="m3u_text_data" name="m3u_text_data" placeholder="e.g., #EXTM3U&#10;#EXTINF:-1 tvg-id=&quot;Channel1&quot;,Channel One&#10;http://example.com/stream1.m3u8"></textarea>
+                <p class="note">OR</p>
                 <label for="m3u_file">Upload M3U File (.m3u, .m3u8):</label>
                 <input type="file" id="m3u_file" name="m3u_file" accept=".m3u,.m3u8">
                 <p class="note">OR</p>
                 <label for="m3u_url">Enter M3U File URL:</label>
                 <input type="text" id="m3u_url" name="m3u_url" placeholder="e.g., https://example.com/myplaylist.m3u">
-                <p class="note">If both are provided, the uploaded file will be used.</p>
+                <p class="note">Input precedence: Pasted Text > Uploaded File > URL.</p>
             </div>
 
             <h2>Provide your EPG XMLTV File (Optional):</h2>
             <div class="input-group">
+                <label for="epg_text_data">Paste EPG XMLTV Text Data:</label>
+                <textarea id="epg_text_data" name="epg_text_data" placeholder="e.g., &lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&#10;&lt;tv&gt;...&lt;/tv&gt;"></textarea>
+                <p class="note">OR</p>
                 <label for="epg_file">Upload EPG File (.xml, .xmltv):</label>
                 <input type="file" id="epg_file" name="epg_file" accept=".xml,.xmltv">
                 <p class="note">OR</p>
                 <label for="epg_url">Enter EPG File URL:</label>
                 <input type="text" id="epg_url" name="epg_url" placeholder="e.g., https://example.com/myepg.xml">
-                <p class="note">If both are provided, the uploaded file will be used.</p>
+                <p class="note">Input precedence: Pasted Text > Uploaded File > URL.</p>
             </div>
 
             <input type="submit" value="Check Files">
