@@ -7,18 +7,14 @@ from m3u_epg_core import (
     fetch_content, 
     check_m3u, 
     apply_m3u_fixes, 
-    check_epg # Assuming you might use check_epg in a cron job too.
+    check_epg
 )
 
 app = Flask(__name__)
 
 # --- Temporary storage for fixed files ---
-# In a production environment with multiple workers or servers,
-# this would need to be a more robust solution like a database,
-# Redis, or temporary file storage with cleanup.
-# For this simple Flask app, an in-memory dictionary is sufficient
-# but will clear on server restart.
 app.temp_fixed_files = {} # Stores {file_id: bytes_content}
+
 
 # --- M3U-EPG Compatibility Checker (remains in app.py as it uses both types of data) ---
 def check_m3u_epg_compatibility(m3u_channels, epg_channels):
@@ -27,8 +23,8 @@ def check_m3u_epg_compatibility(m3u_channels, epg_channels):
     separating specific issues from general advice.
     Returns (list_of_compatibility_issues, list_of_channels_dvr_advice).
     """
-    compatibility_issues = [] # Specific issues (warnings/errors)
-    channels_dvr_advice = []   # General advice/best practices
+    compatibility_issues = []
+    channels_dvr_advice = []
 
     m3u_tvg_ids = {c['tvg_id'] for c in m3u_channels if c['tvg_id']}
     epg_channel_ids = set(epg_channels.keys())
@@ -39,7 +35,7 @@ def check_m3u_epg_compatibility(m3u_channels, epg_channels):
             if m3u_channel['tvg_id'] not in epg_channel_ids:
                 compatibility_issues.append(f"Compatibility Warning: M3U channel '{m3u_channel['name']}' (tvg-id: '{m3u_channel['tvg_id']}') has no matching EPG data found by 'tvg-id'. This channel might not show guide data in Channels DVR.")
         else:
-            pass # We rely on check_m3u to report missing tvg-id
+            pass 
 
 
     # 2. EPG channels without matching M3U data
@@ -56,7 +52,7 @@ def check_m3u_epg_compatibility(m3u_channels, epg_channels):
     channels_dvr_advice.append("Overlapping program times in EPG for a single channel can lead to incorrect guide display or recording issues.")
     channels_dvr_advice.append("Channels DVR prefers HLS (.m3u8) or raw MPEG-TS (.ts) streams. Other formats might have limited or no support.")
     channels_dvr_advice.append("Consider adding a 'group-title' to your M3U channels to organize them into categories in Channels DVR's UI.")
-    channels_dvr_advice.append("Remember: Channels DVR *can* display guide data without an external EPG file if your M3U channels use `tvg-id`s that map to known Gracenote IDs. Otherwise, an external EPG source is required.")
+    channels_dvr_advice.append("Remember: Channels DVR *can* display guide data without an external EPG file if your M3u channels use `tvg-id`s that map to known Gracenote IDs. Otherwise, an external EPG source is required.")
 
     return compatibility_issues, channels_dvr_advice
 
@@ -68,9 +64,12 @@ def index():
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
+    # Retrieve all potential input sources
+    m3u_text_data = request.form.get('m3u_text_data')
     m3u_file = request.files.get('m3u_file')
     m3u_url = request.form.get('m3u_url')
 
+    epg_text_data = request.form.get('epg_text_data')
     epg_file = request.files.get('epg_file')
     epg_url = request.form.get('epg_url')
 
@@ -78,35 +77,43 @@ def upload_file():
     m3u_errors = []
     epg_content = None
     epg_errors = []
-
-    # Determine M3U source and fetch content
-    if m3u_file and m3u_file.filename:
+    
+    # --- Determine M3U source and fetch content based on precedence ---
+    if m3u_text_data and m3u_text_data.strip():
+        m3u_content = m3u_text_data.strip()
+        if not m3u_content.startswith('#EXTM3U'):
+            m3u_errors.append("M3U Warning: Pasted M3U text does not start with '#EXTM3U'. This may indicate malformed data.")
+    elif m3u_file and m3u_file.filename:
         if not m3u_file.filename.lower().endswith(('.m3u', '.m3u8')):
             m3u_errors.append("Invalid M3U file extension. Please upload a .m3u or .m3u8 file.")
         else:
             fetched_content, fetch_msgs = fetch_content('file', m3u_file)
             m3u_content = fetched_content
             m3u_errors.extend(fetch_msgs)
-    elif m3u_url:
+    elif m3u_url and m3u_url.strip():
         fetched_content, fetch_msgs = fetch_content('url', m3u_url)
         m3u_content = fetched_content
         m3u_errors.extend(fetch_msgs)
     else:
-        m3u_errors.append("No M3U file or URL provided.")
+        m3u_errors.append("No M3U data (text, file, or URL) provided.")
 
-
-    # Determine EPG source and fetch content
-    if epg_file and epg_file.filename:
+    # --- Determine EPG source and fetch content based on precedence ---
+    if epg_text_data and epg_text_data.strip():
+        epg_content = epg_text_data.strip()
+        if not epg_content.startswith('<?xml') and not epg_content.startswith('<tv>'):
+             epg_errors.append("EPG Warning: Pasted EPG text does not start with '<?xml' or '<tv>'. This may indicate malformed data.")
+    elif epg_file and epg_file.filename:
         if not (epg_file.filename.lower().endswith('.xml') or epg_file.filename.lower().endswith('.xmltv')):
             epg_errors.append("Invalid EPG file extension. Please upload a .xml or .xmltv file.")
         else:
             fetched_content, fetch_msgs = fetch_content('file', epg_file)
             epg_content = fetched_content
             epg_errors.extend(fetch_msgs)
-    elif epg_url:
+    elif epg_url and epg_url.strip():
         fetched_content, fetch_msgs = fetch_content('url', epg_url)
         epg_content = fetched_content
         epg_errors.extend(fetch_msgs)
+    # EPG is optional, so no 'else' error for missing EPG
 
 
     m3u_channels_data = []
@@ -131,7 +138,7 @@ def upload_file():
             fixed_file_id = str(uuid.uuid4())
             app.temp_fixed_files[fixed_file_id] = fixed_m3u_content.encode('utf-8')
         else:
-            fixed_m3u_content = None # No fixes to apply
+            fixed_m3u_content = m3u_content # If no fixes, the "fixed" content is just the original
     
 
     # Only run EPG analysis if content was successfully fetched
