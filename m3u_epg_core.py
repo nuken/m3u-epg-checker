@@ -37,12 +37,22 @@ def sanitize_channel_name_for_id(name):
     return sane_name
 
 def format_attributes_for_extinf(attributes_dict):
-    """Formats a dictionary of attributes into a string for EXTINF line."""
+    """
+    Formats a dictionary of attributes into a string for an EXTINF line.
+    Ensures values are properly quoted, escaping internal quotes if necessary.
+    """
     formatted_attrs = []
     for key in sorted(attributes_dict.keys()):
         value = attributes_dict[key]
         if value is not None and str(value).strip() != "":
-            formatted_attrs.append(f'{key}="{value}"')
+            # Escape internal double quotes and wrap value in double quotes if it contains spaces or special characters
+            if ' ' in value or '"' in value or "'" in value or ',' in value:
+                # Replace internal double quotes with escaped double quotes
+                value_escaped = value.replace('"', '\\"')
+                formatted_attrs.append(f'{key}="{value_escaped}"')
+            else:
+                # For simple values, just quote it
+                formatted_attrs.append(f'{key}="{value}"')
     return " ".join(formatted_attrs)
 
 def is_gracenote_id(tvg_id):
@@ -57,65 +67,63 @@ def is_gracenote_id(tvg_id):
     gracenote_pattern = re.compile(r"^(EP|MV|SH|GR)\d{8,}(\.[FS]\.EP)?$|^\d{8,}$")
     return bool(gracenote_pattern.match(tvg_id))
 
-# UPDATED: Helper to find a better display name from a potentially long channel name
-def get_clean_display_name(raw_channel_name, attributes):
+def get_clean_display_name(raw_channel_name_after_comma, attributes):
     """
-    Attempts to extract a clean, concise display name.
+    Attempts to extract a clean, concise display name for tvg-name.
     Prioritizes:
-    1. 'tvc-guide-title' attribute from the M3U line.
-    2. 'tvg-name' attribute from the M3U line (cleaned).
-    3. Parsing the 'raw_channel_name' (text after the last comma) for a clean title.
+    1. 'tvc-guide-title' attribute from the M3U line's attributes.
+    2. Parsing the 'raw_channel_name_after_comma' (text after the last comma of #EXTINF)
+       for a clean title if 'tvc-guide-title' is not available.
     """
-    # 1. Prioritize 'tvc-guide-title' if present and not empty from the attributes dict
+    clean_name_candidate = raw_channel_name_after_comma.strip()
+
+    # 1. Prioritize 'tvc-guide-title' from the parsed attributes dictionary
     tvc_guide_title = attributes.get('tvc-guide-title', '').strip()
     if tvc_guide_title:
         return tvc_guide_title
 
-    # 2. Prioritize 'tvg-name' attribute if present and not empty, and clean it.
-    # We apply some basic cleaning to existing tvg-name as well.
-    existing_tvg_name_attr = attributes.get('tvg-name', '').strip()
-    if existing_tvg_name_attr:
-        # Apply light cleaning just in case existing tvg-name isn't perfect
-        cleaned_existing_tvg_name = re.sub(r'[\"\']', '', existing_tvg_name_attr).strip()
-        if len(cleaned_existing_tvg_name) > 50: # If existing is still too long, try to truncate
-            cleaned_existing_tvg_name = cleaned_existing_tvg_name[:47].strip() + '...'
-        return cleaned_existing_tvg_name
+    # --- Fallback to parsing the raw_channel_name_after_comma string ---
+    # This is the text after the last comma on the EXTINF line.
 
-    # --- Fallback to parsing the raw_channel_name string (the text after the last comma) ---
-    clean_name_candidate = raw_channel_name.strip()
-
-    # 3. Try to extract content from the first quoted string at the very beginning of raw_channel_name
+    # 2. Try to extract content from the first quoted string at the very beginning
     # E.g., "Pluto TV Trending Now",description...
     match_initial_quoted = re.match(r'^["\']([^"\']+)["\']', clean_name_candidate)
     if match_initial_quoted:
         candidate = match_initial_quoted.group(1).strip()
-        if candidate and len(candidate) < 60: # Ensure it's not an empty quote or excessively long
+        if candidate and len(candidate) < 60:
             return candidate
 
-    # 4. Try to extract content before the first comma in raw_channel_name
-    # This specifically targets cases like "Channel Name, Some long description"
+    # 3. Try to extract content before the first comma in clean_name_candidate
+    # This targets cases like "Channel Name, Some long description" where the name is first.
     if ',' in clean_name_candidate:
         first_segment = clean_name_candidate.split(',', 1)[0].strip()
+        # Ensure this segment isn't just a stray quote or too short to be a name
         if first_segment and len(first_segment) > 2 and not re.match(r'^[\"\']$', first_segment):
             candidate = re.sub(r'[\"\']', '', first_segment).strip()
             if candidate:
                 return candidate
     
-    # 5. Ultimate Fallback: Aggressive cleaning and truncation of raw_channel_name
+    # 4. Ultimate Fallback: Aggressive cleaning and truncation of raw_channel_name_after_comma
+    # Remove all quotes first for consistent processing
     clean_name_candidate = re.sub(r'[\"\']', '', clean_name_candidate).strip() 
 
+    # Remove descriptions typically separated by "--", ":", " - ", etc.
     clean_name_candidate = re.sub(r'\s+--\s+.*$', '', clean_name_candidate).strip()
     clean_name_candidate = re.sub(r'\s+-\s+.*$', '', clean_name_candidate).strip()
     clean_name_candidate = re.sub(r'\s*:\s+.*$', '', clean_name_candidate).strip()
 
+    # Remove content within parentheses or square brackets (often descriptions)
     clean_name_candidate = re.sub(r'\s*\(.*\)$', '', clean_name_candidate).strip()
     clean_name_candidate = re.sub(r'\s*\[.*\]$', '', clean_name_candidate).strip()
 
+    # Remove common trailing descriptive terms (case-insensitive)
     clean_name_candidate = re.sub(r'\s+(HD|SD|Live|TV|Channel|Show|Movie|Series|Now)\s*$', '', clean_name_candidate, flags=re.IGNORECASE).strip()
 
+    # Truncate if still very long, add ellipsis
     if len(clean_name_candidate) > 50:
         clean_name_candidate = clean_name_candidate[:47].strip() + '...'
 
+    # Final general cleanup for display purposes: remove non-essential punctuation
     clean_name_candidate = re.sub(r'[^\w\s.,&+\-:]', '', clean_name_candidate).strip() 
 
     return clean_name_candidate if clean_name_candidate else "Unknown Channel"
@@ -148,20 +156,32 @@ def check_m3u(file_content, mode='advanced'):
         if line.startswith('#EXTINF:'):
             channel_count += 1
             
-            match = re.search(r'#EXTINF:(-?\d+)\s*([^,]*),(.*)', line)
+            # --- THE CRITICAL REGEX FIX FOR EXTINF LINE PARSING ---
+            # This regex correctly separates attributes from the final channel name (after the last comma),
+            # even if the channel name (after the last comma) itself contains internal commas or quotes.
+            # Breakdown:
+            # - `(-?\d+)`: Duration (group 1)
+            # - `\s*`: Whitespace
+            # - `(.*?)`: Non-greedy match for attributes string (group 2). This captures everything up to the last comma.
+            # - `,(?=[^,]*$)`: Matches the LAST comma on the line. The lookahead `(?=[^,]*$)` ensures it's the last one.
+            # - `(.*)`: The rest of the line as the raw_channel_name (group 3)
+            match = re.search(r'#EXTINF:(-?\d+)\s*(.*?),([^,]*)$', line)
+            
             if not match:
                 errors.append(f"M3U Error: Malformed EXTINF line (Line {line_num_display}): {line}. Expected '#EXTINF:<duration> [attributes],<channel name>'")
                 i += 1
                 continue
 
             duration = match.group(1)
-            attributes_str = match.group(2) # The string containing all attributes (e.g., 'tvg-id="abc" tvg-name="def"')
-            raw_channel_name = match.group(3).strip() # The full raw channel name after the comma
+            attributes_str = match.group(2).strip() # The string containing all attributes
+            raw_channel_name_after_comma = match.group(3).strip() # The full raw channel name AFTER the last comma
 
-            if not raw_channel_name:
+            if not raw_channel_name_after_comma:
                 errors.append(f"M3U Error: Channel name missing in EXTINF line (Line {line_num_display}): {line}")
 
             attributes = {}
+            # This part correctly parses key="value" pairs from the isolated attributes_str
+            # It's robust to spaces within quoted values.
             for attr_match in re.finditer(r'(\S+)="([^"]*)"', attributes_str):
                 attributes[attr_match.group(1).lower()] = attr_match.group(2)
 
@@ -172,8 +192,10 @@ def check_m3u(file_content, mode='advanced'):
             tvg_name_from_attrs = attributes.get('tvg-name', '').strip() # Get current tvg-name attribute value
             group_title = attributes.get('group-title', '').strip()
 
-            # Determine the suggested_display_name using the new logic
-            suggested_display_name = get_clean_display_name(raw_channel_name, attributes)
+            # Determine the suggested_display_name using the new logic.
+            # Pass the raw_channel_name_after_comma (the text after the last comma)
+            # and the fully parsed attributes for the best possible name extraction.
+            suggested_display_name = get_clean_display_name(raw_channel_name_after_comma, attributes)
 
             # --- Basic Mode Checks & Fixes ---
             # Basic mode focuses ONLY on tvg-id and stream URL pairing.
@@ -185,35 +207,39 @@ def check_m3u(file_content, mode='advanced'):
                 if suggested_tvg_id:
                     current_line_attributes['tvg-id'] = suggested_tvg_id
                     modified_attributes_for_fix = True
-                    errors.append(f"M3U Channels DVR Warning: Channel '{raw_channel_name}' (Line {line_num_display}) is missing 'tvg-id'. This is crucial for EPG matching in Channels DVR. Suggesting fix: Add tvg-id='{suggested_tvg_id}'.")
+                    errors.append(f"M3U Channels DVR Warning: Channel '{raw_channel_name_after_comma}' (Line {line_num_display}) is missing 'tvg-id'. This is crucial for EPG matching in Channels DVR. Suggesting fix: Add tvg-id='{suggested_tvg_id}'.")
                 else:
-                    errors.append(f"M3U Channels DVR Warning: Channel '{raw_channel_name}' (Line {line_num_display}) is missing 'tvg-id'. (Cannot auto-suggest a fix for this name).")
+                    errors.append(f"M3U Channels DVR Warning: Channel '{raw_channel_name_after_comma}' (Line {line_num_display}) is missing 'tvg-id'. (Cannot auto-suggest a fix for this name).")
             
             # --- Advanced Mode Specific Checks & Fixes ---
             if mode == 'advanced':
                 # Suggestion 2: Missing or unclean tvg-name
-                # Use the 'tvg_name_from_attrs' for comparison, as that's the actual current attribute value.
-                is_tvg_name_unclean = (
+                # The condition is now:
+                # 1. tvg-name attribute is missing.
+                # 2. OR tvg-name attribute exists, but its value is different from our suggested clean name AND
+                #    (it's very long OR it contains suspicious characters like internal commas/quotes).
+                is_tvg_name_unclean_heuristic = (
                     len(tvg_name_from_attrs) > 50 or # Arbitrary length threshold
-                    re.search(r'\s+(HD|SD|Live|TV|Channel|Show|Movie|Series|Now)\s*$', tvg_name_from_attrs, flags=re.IGNORECASE) or
-                    ',' in tvg_name_from_attrs or
-                    '(' in tvg_name_from_attrs or '[' in tvg_name_from_attrs
+                    ',' in tvg_name_from_attrs or # Contains internal comma
+                    '\"' in tvg_name_from_attrs or '\'' in tvg_name_from_attrs # Contains quotes
                 )
 
-                if not tvg_name_from_attrs or (tvg_name_from_attrs != suggested_display_name and is_tvg_name_unclean):
+                if not tvg_name_from_attrs or \
+                   (tvg_name_from_attrs != suggested_display_name and is_tvg_name_unclean_heuristic):
+                    
                     current_line_attributes['tvg-name'] = suggested_display_name
                     modified_attributes_for_fix = True
                     if not tvg_name_from_attrs:
-                         errors.append(f"M3U Channels DVR Warning: Channel '{raw_channel_name}' (Line {line_num_display}) is missing 'tvg-name'. Channels DVR often uses this for display. Suggesting fix: Add tvg-name='{suggested_display_name}'.")
+                         errors.append(f"M3U Channels DVR Warning: Channel '{raw_channel_name_after_comma}' (Line {line_num_display}) is missing 'tvg-name'. Channels DVR often uses this for display. Suggesting fix: Add tvg-name='{suggested_display_name}'.")
                     else:
-                         errors.append(f"M3U Channels DVR Warning: Channel '{raw_channel_name}' (Line {line_num_display}) has an unclean 'tvg-name' attribute ('{tvg_name_from_attrs}'). Suggesting fix: Change tvg-name to '{suggested_display_name}'.")
+                         errors.append(f"M3U Channels DVR Warning: Channel '{raw_channel_name_after_comma}' (Line {line_num_display}) has an unclean 'tvg-name' attribute ('{tvg_name_from_attrs}'). Suggesting fix: Change tvg-name to '{suggested_display_name}'.")
 
                 # Suggestion 3: Missing group-title
                 if not group_title:
                     suggested_group_title = "Unsorted"
                     current_line_attributes['group-title'] = suggested_group_title
                     modified_attributes_for_fix = True
-                    errors.append(f"M3U Channels DVR Suggestion: Channel '{raw_channel_name}' (Line {line_num_display}) is missing 'group-title'. Adding one helps organize channels in Channels DVR. Suggesting fix: Add group-title='{suggested_group_title}'.")
+                    errors.append(f"M3U Channels DVR Suggestion: Channel '{raw_channel_name_after_comma}' (Line {line_num_display}) is missing 'group-title'. Adding one helps organize channels in Channels DVR. Suggesting fix: Add group-title='{suggested_group_title}'.")
 
             # Add a single 'rebuild_extinf_attributes' fix if any attributes were modified in current mode
             if modified_attributes_for_fix:
@@ -221,7 +247,7 @@ def check_m3u(file_content, mode='advanced'):
                     'type': 'rebuild_extinf_attributes',
                     'line_num': line_num_display,
                     'duration': duration,
-                    'channel_name': raw_channel_name, # Original raw channel name for the reconstruction
+                    'channel_name': raw_channel_name_after_comma, # Original raw channel name for reconstruction
                     'final_attributes': current_line_attributes
                 })
             
@@ -229,17 +255,17 @@ def check_m3u(file_content, mode='advanced'):
 
             if current_tvg_id_for_checks:
                 if current_tvg_id_for_checks in tvg_id_map:
-                    errors.append(f"M3U Channels DVR Warning: Duplicate 'tvg-id' '{current_tvg_id_for_checks}' found for channel '{raw_channel_name}' (Line {line_num_display}). Previous at line(s): {', '.join(map(str, tvg_id_map[current_tvg_id_for_checks]))}. Channels DVR may only import one instance.")
+                    errors.append(f"M3U Channels DVR Warning: Duplicate 'tvg-id' '{current_tvg_id_for_checks}' found for channel '{raw_channel_name_after_comma}' (Line {line_num_display}). Previous at line(s): {', '.join(map(str, tvg_id_map[current_tvg_id_for_checks]))}. Channels DVR may only import one instance.")
                     tvg_id_map[current_tvg_id_for_checks].append(line_num_display)
                 else:
                     tvg_id_map[current_tvg_id_for_checks] = [line_num_display]
 
-            if raw_channel_name:
-                if raw_channel_name in channel_name_map:
-                    errors.append(f"M3U Warning: Duplicate channel name '{raw_channel_name}' found (Line {line_num_display}). Previous at line(s): {', '.join(map(str, channel_name_map[raw_channel_name]))}. This might cause confusion.")
-                    channel_name_map[raw_channel_name].append(line_num_display)
+            if raw_channel_name_after_comma:
+                if raw_channel_name_after_comma in channel_name_map:
+                    errors.append(f"M3U Warning: Duplicate channel name '{raw_channel_name_after_comma}' found (Line {line_num_display}). Previous at line(s): {', '.join(map(str, channel_name_map[raw_channel_name_after_comma]))}. This might cause confusion.")
+                    channel_name_map[raw_channel_name_after_comma].append(line_num_display)
                 else:
-                    channel_name_map[raw_channel_name] = [line_num_display]
+                    channel_name_map[raw_channel_name_after_comma] = [line_num_display]
 
             stream_url = ""
             stream_url_found_at_line = -1
@@ -263,21 +289,21 @@ def check_m3u(file_content, mode='advanced'):
                         'line_num': line_num_display,
                         'original_stream_line_num': stream_url_found_at_line,
                         'stream_url': stream_url,
-                        'channel_name': raw_channel_name
+                        'channel_name': raw_channel_name_after_comma
                     })
-                    errors.append(f"M3U Error: Stream URL for channel '{raw_channel_name}' (Line {line_num_display}) was not immediately after EXTINF line. Found at Line {stream_url_found_at_line}. Suggesting fix: Reorder URL.")
+                    errors.append(f"M3U Error: Stream URL for channel '{raw_channel_name_after_comma}' (Line {line_num_display}) was not immediately after EXTINF line. Found at Line {stream_url_found_at_line}. Suggesting fix: Reorder URL.")
                 
                 i = stream_url_found_at_line - 1
             else:
-                errors.append(f"M3U Error: Missing stream URL after EXTINF line for channel '{raw_channel_name}' (Line {line_num_display}). Each #EXTINF must be immediately followed by a stream URL.")
+                errors.append(f"M3U Error: Missing stream URL after EXTINF line for channel '{raw_channel_name_after_comma}' (Line {line_num_display}). Each #EXTINF must be immediately followed by a stream URL.")
                 i += 1
             
             # This is a suggestion, only include in advanced mode
             if mode == 'advanced' and stream_url and not (stream_url.lower().endswith('.m3u8') or '.ts' in stream_url.lower() or '/hls/' in stream_url.lower()):
-                errors.append(f"M3U Channels DVR Suggestion: Stream URL for '{raw_channel_name}' (Line {line_num_display}) might not be HLS (.m3u8) or MPEG-TS (.ts). Channels DVR generally prefers HLS or raw MPEG-TS streams.")
+                errors.append(f"M3U Channels DVR Suggestion: Stream URL for '{raw_channel_name_after_comma}' (Line {line_num_display}) might not be HLS (.m3u8) or MPEG-TS (.ts). Channels DVR generally prefers HLS or raw MPEG-TS streams.")
             
             channels.append({
-                'name': raw_channel_name, # This remains the original full name for record keeping
+                'name': raw_channel_name_after_comma, # This remains the original full name for record keeping
                 'tvg_id': current_line_attributes.get('tvg-id', ''),
                 'tvg_name': current_line_attributes.get('tvg-name', ''), # This will be the cleaned name
                 'tvg_logo': current_line_attributes.get('tvg-logo', attributes.get('tvg-logo', '').strip()),
@@ -317,11 +343,12 @@ def apply_m3u_fixes(original_content, fix_suggestions):
 
         if fix_type == 'rebuild_extinf_attributes':
             duration = fix['duration']
-            channel_name = fix['channel_name'] # This is the original raw channel name
+            channel_name_after_comma = fix['channel_name'] # This is the original raw channel name AFTER the last comma
             final_attributes = fix['final_attributes']
 
             new_attributes_str = format_attributes_for_extinf(final_attributes)
-            new_extinf_line_content = f'#EXTINF:{duration} {new_attributes_str},{channel_name}' # Use original channel_name here
+            # Reconstruct the line: #EXTINF:duration attributes,channel_name_after_comma
+            new_extinf_line_content = f'#EXTINF:{duration} {new_attributes_str},{channel_name_after_comma}'
             fixed_lines_array[line_idx] = new_extinf_line_content + "\n"
             
         elif fix_type == 'reorder_stream_url':
