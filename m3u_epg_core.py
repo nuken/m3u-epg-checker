@@ -45,7 +45,6 @@ def format_attributes_for_extinf(attributes_dict):
             formatted_attrs.append(f'{key}="{value}"')
     return " ".join(formatted_attrs)
 
-# New function to check for Gracenote ID pattern
 def is_gracenote_id(tvg_id):
     """
     Checks if a tvg-id appears to be a Gracenote ID based on common patterns.
@@ -55,20 +54,55 @@ def is_gracenote_id(tvg_id):
     if not tvg_id:
         return False
     
-    # Common patterns:
-    # EP########.F.EP (e.g., EP00000001.F.EP)
-    # MV######## (e.g., MV00000001) - less common for live TV but exists
-    # SH######## (e.g., SH00000001)
-    # GR##########.F.EP (some global IDs)
-    # Some older or less common might be purely numeric
-    
-    # This regex attempts to broadly cover common Gracenote patterns Channels DVR uses.
-    # It looks for:
-    # - Starts with EP, MV, SH, or GR followed by 8 or more digits/alphanumerics
-    # - Optionally ends with a common suffix like .F.EP or .S.EP
-    # - Or just contains a long sequence of digits/alphanumerics (for simpler numeric IDs)
-    gracenote_pattern = re.compile(r"^(EP|MV|SH|GR)\d{8,}(\.F\.EP|\.S\.EP)?$|^\d{8,}$")
+    gracenote_pattern = re.compile(r"^(EP|MV|SH|GR)\d{8,}(\.[FS]\.EP)?$|^\d{8,}$")
     return bool(gracenote_pattern.match(tvg_id))
+
+# NEW: Helper to find a better display name from a potentially long channel name
+def get_clean_display_name(raw_channel_name, attributes):
+    """
+    Attempts to extract a clean, concise display name from a raw channel name string.
+    Prioritizes tvc-guide-title, then quoted parts, then truncates.
+    """
+    # 1. Prioritize 'tvc-guide-title' if present and not empty
+    tvc_guide_title = attributes.get('tvc-guide-title', '').strip()
+    if tvc_guide_title:
+        return tvc_guide_title
+
+    # 2. Look for content inside quotes at the end (like in your example)
+    # Example: "abc.spark.ca",Pluto TV Icons' (Line 11) is missing 'tvg-name'. ... "Pluto TV Icons"
+    # This might capture "Pluto TV Icons" if it's the last quoted string.
+    match = re.search(r'["\']([^"\']+)["\']\s*$', raw_channel_name)
+    if match:
+        return match.group(1).strip()
+
+    # 3. Look for content before a long description separator (e.g., "Channel Name -- Description" or "Channel Name: Description")
+    # This might capture "Channel Name"
+    match = re.search(r'^(.*?)\s*[-–—:]\s*(.*)$', raw_channel_name)
+    if match:
+        # If the part before the separator is short and the part after is long, take the first part.
+        # This is a heuristic, adjust as needed.
+        if len(match.group(1).strip()) < len(match.group(2).strip()) * 0.5: # If first part is significantly shorter
+             return match.group(1).strip()
+        
+    # 4. If none of the above, try to truncate the name to a reasonable length
+    # and remove any trailing descriptive text, often found after periods or numbers.
+    clean_name = raw_channel_name.replace('"', '').replace("'", '').strip() # Remove any remaining quotes
+    
+    # Try to remove common descriptive patterns at the end
+    clean_name = re.sub(r'\s*\.\s*(HD|SD|4K|UHD|UHD1)\s*$', r'.\1', clean_name, flags=re.IGNORECASE).strip() # "Channel.HD"
+    clean_name = re.sub(r'\s+\(.*\)$', '', clean_name).strip() # "(description)"
+    clean_name = re.sub(r'\s*-\s*.*$', '', clean_name).strip() # "Channel - Description"
+    clean_name = re.sub(r'\s*:\s*.*$', '', clean_name).strip() # "Channel: Description"
+
+    # Truncate if still very long
+    if len(clean_name) > 60: # Arbitrary length, adjust as necessary
+        clean_name = clean_name[:57] + '...' # Truncate and add ellipsis
+
+    # As a last resort, use the raw channel name, but aggressively sanitize it for a name.
+    # This is more for display, less for tvg-id, but we use it as the base.
+    clean_name = re.sub(r'[^a-zA-Z0-9\s.,&+\-:]', '', clean_name).strip() # Allow some basic punctuation for display
+
+    return clean_name if clean_name else "Unknown Channel"
 
 
 def check_m3u(file_content):
@@ -105,7 +139,7 @@ def check_m3u(file_content):
 
             duration = match.group(1)
             attributes_str = match.group(2)
-            channel_name = match.group(3).strip()
+            channel_name = match.group(3).strip() # This is the full raw channel name after the comma
 
             if not channel_name:
                 errors.append(f"M3U Error: Channel name missing in EXTINF line (Line {line_num_display}): {line}")
@@ -121,9 +155,14 @@ def check_m3u(file_content):
             tvg_name = attributes.get('tvg-name', '').strip()
             group_title = attributes.get('group-title', '').strip()
 
+            # Determine the suggested_display_name for tvg-name and potentially tvg-id
+            suggested_display_name = get_clean_display_name(channel_name, attributes)
+
+            # Suggestion 1: Missing tvg-id
             suggested_tvg_id = ""
             if not tvg_id:
-                suggested_tvg_id = sanitize_channel_name_for_id(channel_name)
+                # Use the sanitized version of the suggested_display_name for tvg-id
+                suggested_tvg_id = sanitize_channel_name_for_id(suggested_display_name)
                 if suggested_tvg_id:
                     current_line_attributes['tvg-id'] = suggested_tvg_id
                     modified_attributes_for_fix = True
@@ -131,11 +170,13 @@ def check_m3u(file_content):
                 else:
                     errors.append(f"M3U Channels DVR Warning: Channel '{channel_name}' (Line {line_num_display}) is missing 'tvg-id'. (Cannot auto-suggest a fix for this name).")
             
+            # Suggestion 2: Missing tvg-name (Use the derived suggested_display_name)
             if not tvg_name:
-                current_line_attributes['tvg-name'] = channel_name
+                current_line_attributes['tvg-name'] = suggested_display_name
                 modified_attributes_for_fix = True
-                errors.append(f"M3U Channels DVR Warning: Channel '{channel_name}' (Line {line_num_display}) is missing 'tvg-name'. Channels DVR often uses this for display. Suggesting fix: Add tvg-name='{channel_name}'.")
+                errors.append(f"M3U Channels DVR Warning: Channel '{channel_name}' (Line {line_num_display}) is missing 'tvg-name'. Channels DVR often uses this for display. Suggesting fix: Add tvg-name='{suggested_display_name}'.")
             
+            # Suggestion 3: Missing group-title
             if not group_title:
                 suggested_group_title = "Unsorted"
                 current_line_attributes['group-title'] = suggested_group_title
@@ -147,7 +188,7 @@ def check_m3u(file_content):
                     'type': 'rebuild_extinf_attributes',
                     'line_num': line_num_display,
                     'duration': duration,
-                    'channel_name': channel_name,
+                    'channel_name': channel_name, # Original raw channel name for the reconstruction
                     'final_attributes': current_line_attributes
                 })
             
@@ -201,9 +242,9 @@ def check_m3u(file_content):
                 errors.append(f"M3U Channels DVR Suggestion: Stream URL for '{channel_name}' (Line {line_num_display}) might not be HLS (.m3u8) or MPEG-TS (.ts). Channels DVR generally prefers HLS or raw MPEG-TS streams.")
             
             channels.append({
-                'name': channel_name,
+                'name': channel_name, # This remains the original full name for record keeping
                 'tvg_id': current_line_attributes.get('tvg-id', ''),
-                'tvg_name': current_line_attributes.get('tvg-name', ''),
+                'tvg_name': current_line_attributes.get('tvg-name', ''), # This will be the cleaned name
                 'tvg_logo': current_line_attributes.get('tvg-logo', attributes.get('tvg-logo', '').strip()),
                 'group_title': current_line_attributes.get('group-title', ''),
                 'stream_url': stream_url
