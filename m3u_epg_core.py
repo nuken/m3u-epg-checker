@@ -95,8 +95,8 @@ def get_clean_display_name(raw_channel_name, attributes):
             return candidate
 
     # 4. Fallback: Aggressive cleaning and truncation from the beginning
-    # Remove common descriptive patterns that might appear after the name
-    clean_name = re.sub(r'[\"\']', '', clean_name).strip() # Remove all quotes first
+    # Remove all quotes first for consistent processing
+    clean_name = re.sub(r'[\"\']', '', clean_name).strip() 
 
     # Remove descriptions typically separated by "--", ":", " - ", etc.
     # Try longest separators first for clearer splits
@@ -155,14 +155,15 @@ def check_m3u(file_content, mode='advanced'):
                 continue
 
             duration = match.group(1)
-            attributes_str = match.group(2)
-            channel_name = match.group(3).strip() # This is the full raw channel name after the comma
+            attributes_str = match.group(2) # The string containing all attributes (e.g., 'tvg-id="abc" tvg-name="def"')
+            channel_name = match.group(3).strip() # The full raw channel name after the comma
 
             if not channel_name:
                 errors.append(f"M3U Error: Channel name missing in EXTINF line (Line {line_num_display}): {line}")
 
             attributes = {}
-            for attr_match in re.finditer(r'(\S+)="([^"]*)"', attributes_match.group(2)): # Fixed here: should be attributes_str, not attr_match.group(2)
+            # CORRECTED LINE HERE: Use attributes_str, not attributes_match.group(2)
+            for attr_match in re.finditer(r'(\S+)="([^"]*)"', attributes_str):
                 attributes[attr_match.group(1).lower()] = attr_match.group(2)
 
             current_line_attributes = attributes.copy()
@@ -254,7 +255,7 @@ def check_m3u(file_content, mode='advanced'):
                         'stream_url': stream_url,
                         'channel_name': channel_name
                     })
-                    errors.append(f"M3U Error: Stream URL for channel '{channel_name}' was not immediately after EXTINF line (Line {line_num_display}). Found at Line {stream_url_found_at_line}. Suggesting fix: Reorder URL.")
+                    errors.append(f"M3U Error: Stream URL for channel '{channel_name}' (Line {line_num_display}) was not immediately after EXTINF line. Found at Line {stream_url_found_at_line}. Suggesting fix: Reorder URL.")
                 
                 i = stream_url_found_at_line - 1
             else:
