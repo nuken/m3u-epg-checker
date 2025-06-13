@@ -71,24 +71,31 @@ def get_clean_display_name(raw_channel_name_after_comma, attributes):
     """
     Attempts to extract a clean, concise display name for tvg-name.
     Prioritizes:
-    1. 'tvg-name' attribute from the M3U line's attributes (new priority).
+    1. 'tvg-name' attribute from the M3U line's attributes, with cleaning.
     2. 'tvc-guide-title' attribute from the M3U line's attributes.
     3. Parsing the 'raw_channel_name_after_comma' (text after the last comma of #EXTINF)
        for a clean title if the above are not available.
     """
     clean_name_candidate = raw_channel_name_after_comma.strip()
 
-    # 1. Prioritize 'tvg-name' from the parsed attributes dictionary
+    # 1. Prioritize and clean 'tvg-name' from the parsed attributes dictionary
     tvg_name_from_attrs = attributes.get('tvg-name', '').strip()
     if tvg_name_from_attrs:
-        # If tvg-name already exists and looks reasonable (not just a pure number, not extremely long and clearly malformed)
-        # We can add more robust checks here if needed, but for now, if it's there and not empty, use it.
-        # Avoid using it if it matches the 'raw_channel_name_after_comma' and that raw name is clearly too long/complex
-        # or if the tvg_name_from_attrs itself is a clearly bad value (e.g., just a stream URL part)
-        if not re.fullmatch(r'\d+', tvg_name_from_attrs) and len(tvg_name_from_attrs) < 60: # Basic sanity check for tvg-name content
-            return tvg_name_from_attrs
+        # Check if the extracted tvg_name_from_attrs contains an unexpected comma.
+        # This addresses cases like tvg-name="Name",description where the parsing regex
+        # might have incorrectly included the description as part of tvg-name.
+        if ',' in tvg_name_from_attrs:
+            cleaned_tvg_name = tvg_name_from_attrs.split(',', 1)[0].strip()
+            # If after splitting, the name looks reasonable and is not empty, use it.
+            if cleaned_tvg_name and len(cleaned_tvg_name) < 60 and not re.fullmatch(r'\d+', cleaned_tvg_name):
+                return cleaned_tvg_name
+        else:
+            # If no comma, and the name looks reasonable, use it directly.
+            if tvg_name_from_attrs and len(tvg_name_from_attrs) < 60 and not re.fullmatch(r'\d+', tvg_name_from_attrs):
+                return tvg_name_from_attrs
 
-    # 2. Prioritize 'tvc-guide-title' from the parsed attributes dictionary (original logic moved down)
+
+    # 2. Prioritize 'tvc-guide-title' from the parsed attributes dictionary
     tvc_guide_title = attributes.get('tvc-guide-title', '').strip()
     if tvc_guide_title:
         return tvc_guide_title
