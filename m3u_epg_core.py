@@ -45,7 +45,7 @@ def format_attributes_for_extinf(attributes_dict):
     for key in sorted(attributes_dict.keys()):
         value = attributes_dict[key]
         if value is not None and str(value).strip() != "":
-            # Escape internal double quotes and wrap value in double quotes if it contains spaces or special characters
+            # Ensure values with spaces or special chars are re-quoted
             if ' ' in value or '"' in value or "'" in value or ',' in value:
                 # Replace internal double quotes with escaped double quotes
                 value_escaped = value.replace('"', '\\"')
@@ -163,8 +163,10 @@ def check_m3u(file_content, mode='advanced'):
             # - `(-?\d+)`: Duration (group 1)
             # - `\s*`: Whitespace
             # - `(.*?)`: Non-greedy match for attributes string (group 2). This captures everything up to the last comma.
-            # - `,(?=[^,]*$)`: Matches the LAST comma on the line. The lookahead `(?=[^,]*$)` ensures it's the last one.
-            # - `(.*)`: The rest of the line as the raw_channel_name (group 3)
+            # - `,(?=[^,]*$)`: Lookahead for a comma that's followed by
+            #   an even number of quotes until the end of the line. This implies it's not
+            #   inside a quoted string, making it the "last significant comma".
+            # - `(.*)`: The rest of the line as raw_channel_name (group 3)
             match = re.search(r'#EXTINF:(-?\d+)\s*(.*?),([^,]*)$', line)
             
             if not match:
@@ -213,19 +215,25 @@ def check_m3u(file_content, mode='advanced'):
             
             # --- Advanced Mode Specific Checks & Fixes ---
             if mode == 'advanced':
-                # Suggestion 2: Missing or unclean tvg-name
+                # Suggestion 2: Missing or incorrect tvg-name
                 # The condition is now:
-                # 1. tvg-name attribute is missing.
-                # 2. OR tvg-name attribute exists, but its value is different from our suggested clean name AND
-                #    (it's very long OR it contains suspicious characters like internal commas/quotes).
-                is_tvg_name_unclean_heuristic = (
-                    len(tvg_name_from_attrs) > 50 or # Arbitrary length threshold
-                    ',' in tvg_name_from_attrs or # Contains internal comma
-                    '\"' in tvg_name_from_attrs or '\'' in tvg_name_from_attrs # Contains quotes
+                # 1. tvg-name attribute is completely missing (empty string).
+                # OR
+                # 2. tvg-name attribute exists, but its value is different from our suggested_display_name,
+                #    AND our suggested_display_name is not empty/generic,
+                #    AND the existing tvg-name attribute looks "bad" (e.g., purely numeric, very long, contains internal commas/quotes).
+                
+                is_existing_tvg_name_potentially_bad = (
+                    re.fullmatch(r'\d+', tvg_name_from_attrs) is not None or # Purely numeric (like "115455")
+                    len(tvg_name_from_attrs) > 50 or # Excessively long
+                    ',' in tvg_name_from_attrs or # Contains an internal comma
+                    '\"' in tvg_name_from_attrs or '\'' in tvg_name_from_attrs # Contains internal quotes
                 )
 
                 if not tvg_name_from_attrs or \
-                   (tvg_name_from_attrs != suggested_display_name and is_tvg_name_unclean_heuristic):
+                   (tvg_name_from_attrs != suggested_display_name and 
+                    suggested_display_name != "Unknown Channel" and # Ensure suggested name is good
+                    is_existing_tvg_name_potentially_bad): # And existing one is actually bad
                     
                     current_line_attributes['tvg-name'] = suggested_display_name
                     modified_attributes_for_fix = True
@@ -254,7 +262,7 @@ def check_m3u(file_content, mode='advanced'):
             current_tvg_id_for_checks = current_line_attributes.get('tvg-id', '').strip()
 
             if current_tvg_id_for_checks:
-                if current_tvg_id_for_checks in tvg_id_map:
+                if current_tvg_for_checks in tvg_id_map:
                     errors.append(f"M3U Channels DVR Warning: Duplicate 'tvg-id' '{current_tvg_id_for_checks}' found for channel '{raw_channel_name_after_comma}' (Line {line_num_display}). Previous at line(s): {', '.join(map(str, tvg_id_map[current_tvg_id_for_checks]))}. Channels DVR may only import one instance.")
                     tvg_id_map[current_tvg_id_for_checks].append(line_num_display)
                 else:
