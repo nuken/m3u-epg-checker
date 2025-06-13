@@ -1,3 +1,5 @@
+# m3u_epg_core.py
+
 import re
 import requests
 from datetime import datetime
@@ -183,6 +185,13 @@ def check_m3u(file_content):
                 'stream_url': stream_url
             })
 
+        # ADD THIS BLOCK TO EXPLICITLY IGNORE EXTVLCOPT AND OTHER SIMILAR OPTION TAGS
+        elif line.startswith('#EXTVLCOPT:'):
+            # Explicitly ignore VLC options as they are not critical for parsing or fixing main M3U structure.
+            # No error/warning needed for this line type if it's explicitly handled as ignorable.
+            pass
+        # END OF NEW BLOCK
+        
         elif not line.startswith('#EXTM3U'):
             errors.append(f"M3U Warning: Unexpected line (might be ignored) (Line {line_num_display}): {line}")
         
