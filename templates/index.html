@@ -32,7 +32,7 @@
         }
         .input-group input[type="file"],
         .input-group input[type="text"],
-        .input-group textarea { /* Added textarea to styles */
+        .input-group textarea {
             width: calc(100% - 20px);
             padding: 10px;
             margin-top: 5px;
@@ -42,14 +42,28 @@
             font-size: 1em;
         }
         .input-group textarea {
-            min-height: 150px; /* Make text area taller */
-            resize: vertical; /* Allow vertical resizing */
+            min-height: 150px;
+            resize: vertical;
         }
         .input-group p.note {
             font-size: 0.85em;
             color: #777;
             margin-top: 5px;
-            margin-bottom: 10px; /* Added margin-bottom for better spacing */
+            margin-bottom: 10px;
+        }
+        .mode-selection { /* New style for mode selection */
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .mode-selection label {
+            margin-right: 15px;
+            margin-bottom: 0; /* Override default label margin */
+            font-weight: normal; /* Override bold */
+        }
+        .mode-selection input[type="radio"] {
+            width: auto;
+            margin-right: 5px;
         }
         input[type="submit"] {
             padding: 12px 25px;
@@ -82,6 +96,19 @@
             This tool helps you check your M3U playlist and EPG XMLTV files for common errors and compatibility with Channels DVR requirements. You can either upload files, provide public URLs, or paste text data directly.
         </p>
         <form action="/upload" method="post" enctype="multipart/form-data">
+            <h2>Select Mode:</h2>
+            <div class="input-group">
+                <p class="mode-selection">
+                    <input type="radio" id="mode_basic" name="mode" value="basic" checked>
+                    <label for="mode_basic">Basic Mode (Essential Checks & Fixes)</label>
+                </p>
+                <p class="mode-selection">
+                    <input type="radio" id="mode_advanced" name="mode" value="advanced">
+                    <label for="mode_advanced">Advanced Mode (Comprehensive Checks & Fixes)</label>
+                </p>
+                <p class="note">Choose 'Basic' for quick essential validation, 'Advanced' for detailed analysis and all fix suggestions.</p>
+            </div>
+
             <h2>Provide your M3U Playlist:</h2>
             <div class="input-group">
                 <label for="m3u_text_data">Paste M3U Text Data:</label>
