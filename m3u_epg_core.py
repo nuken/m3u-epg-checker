@@ -1,5 +1,3 @@
-# m3u_epg_core.py
-
 import re
 import requests
 from datetime import datetime
@@ -46,6 +44,32 @@ def format_attributes_for_extinf(attributes_dict):
         if value is not None and str(value).strip() != "":
             formatted_attrs.append(f'{key}="{value}"')
     return " ".join(formatted_attrs)
+
+# New function to check for Gracenote ID pattern
+def is_gracenote_id(tvg_id):
+    """
+    Checks if a tvg-id appears to be a Gracenote ID based on common patterns.
+    Gracenote IDs often start with 'EP' or are numeric/alphanumeric followed by '.F.EP'
+    or similar structures used by Channels DVR. This is a heuristic.
+    """
+    if not tvg_id:
+        return False
+    
+    # Common patterns:
+    # EP########.F.EP (e.g., EP00000001.F.EP)
+    # MV######## (e.g., MV00000001) - less common for live TV but exists
+    # SH######## (e.g., SH00000001)
+    # GR##########.F.EP (some global IDs)
+    # Some older or less common might be purely numeric
+    
+    # This regex attempts to broadly cover common Gracenote patterns Channels DVR uses.
+    # It looks for:
+    # - Starts with EP, MV, SH, or GR followed by 8 or more digits/alphanumerics
+    # - Optionally ends with a common suffix like .F.EP or .S.EP
+    # - Or just contains a long sequence of digits/alphanumerics (for simpler numeric IDs)
+    gracenote_pattern = re.compile(r"^(EP|MV|SH|GR)\d{8,}(\.F\.EP|\.S\.EP)?$|^\d{8,}$")
+    return bool(gracenote_pattern.match(tvg_id))
+
 
 def check_m3u(file_content):
     """
@@ -185,12 +209,8 @@ def check_m3u(file_content):
                 'stream_url': stream_url
             })
 
-        # ADD THIS BLOCK TO EXPLICITLY IGNORE EXTVLCOPT AND OTHER SIMILAR OPTION TAGS
         elif line.startswith('#EXTVLCOPT:'):
-            # Explicitly ignore VLC options as they are not critical for parsing or fixing main M3U structure.
-            # No error/warning needed for this line type if it's explicitly handled as ignorable.
-            pass
-        # END OF NEW BLOCK
+            pass # Explicitly ignore VLC options
         
         elif not line.startswith('#EXTM3U'):
             errors.append(f"M3U Warning: Unexpected line (might be ignored) (Line {line_num_display}): {line}")
