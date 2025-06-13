@@ -2,12 +2,13 @@ from flask import Flask, request, render_template, redirect, url_for, send_file,
 import uuid # For generating unique IDs
 import io # For in-memory file for download
 
-# Import the core logic functions
+# Import the core logic functions, including is_gracenote_id
 from m3u_epg_core import (
     fetch_content, 
     check_m3u, 
     apply_m3u_fixes, 
-    check_epg
+    check_epg,
+    is_gracenote_id # <--- Import the new function
 )
 
 app = Flask(__name__)
@@ -29,11 +30,18 @@ def check_m3u_epg_compatibility(m3u_channels, epg_channels):
     m3u_tvg_ids = {c['tvg_id'] for c in m3u_channels if c['tvg_id']}
     epg_channel_ids = set(epg_channels.keys())
 
+    # Flag to track if any Gracenote IDs were found when EPG is missing
+    gracenote_ids_found_without_epg = False
+
     # 1. Channels in M3U without matching EPG data
     for m3u_channel in m3u_channels:
         if m3u_channel['tvg_id']:
             if m3u_channel['tvg_id'] not in epg_channel_ids:
                 compatibility_issues.append(f"Compatibility Warning: M3U channel '{m3u_channel['name']}' (tvg-id: '{m3u_channel['tvg_id']}') has no matching EPG data found by 'tvg-id'. This channel might not show guide data in Channels DVR.")
+                
+                # If no EPG was provided AND this tvg-id looks like Gracenote
+                if not epg_channels and is_gracenote_id(m3u_channel['tvg_id']):
+                    gracenote_ids_found_without_epg = True
         else:
             pass 
 
@@ -44,7 +52,19 @@ def check_m3u_epg_compatibility(m3u_channels, epg_channels):
             display_names = epg_channels.get(epg_id, {}).get('display_names', ['N/A'])
             compatibility_issues.append(f"Compatibility Warning: EPG channel '{', '.join(display_names)}' (id: '{epg_id}') has no matching M3U channel via 'tvg-id'. This EPG data will not be used by Channels DVR.")
 
-    # 3. General Channels DVR compatibility advice
+    # 3. General Channels DVR compatibility advice (and specific notes for missing EPG)
+    # Check if EPG was provided at all (meaning epg_content existed)
+    # The condition 'not epg_channels and not epg_errors' from upload_file implies epg_content was empty or failed.
+    # We will use the 'epg_channels' dictionary itself as an indicator of whether EPG data was successfully parsed.
+    if not epg_channels and not compatibility_issues: # Only add this note if no EPG issues were found initially
+        if m3u_channels and gracenote_ids_found_without_epg:
+             compatibility_issues.append("Compatibility Note: No external EPG data provided. However, some M3U channels have `tvg-id`s that appear to be Gracenote IDs. Channels DVR might use its internal Gracenote guide data for these channels.")
+        elif m3u_channels: # M3U provided, but no EPG, and no obvious Gracenote IDs
+            compatibility_issues.append("Compatibility Note: No external EPG data provided. Channels DVR will require `tvg-id`s that map to known Gracenote IDs to display guide data, or an external EPG source.")
+        elif not m3u_channels: # Neither M3U nor EPG processed
+            compatibility_issues.append("Compatibility Note: No M3U or EPG data provided for compatibility check.")
+
+
     channels_dvr_advice.append("For optimal guide data, ensure 'tvg-id' in M3U *exactly* matches 'id' in EPG (case-sensitive).")
     channels_dvr_advice.append("Missing or inconsistent 'tvg-id' attributes are the most common reason for guide data not showing up.")
     channels_dvr_advice.append("Duplicate 'tvg-id' values in M3U can cause unpredictable channel importing in Channels DVR.")
@@ -147,14 +167,15 @@ def upload_file():
         epg_errors.extend(epg_errors_analysis)
     
     # Run compatibility checks and collect general advice
-    if m3u_content and epg_content:
-        m3u_epg_compat_issues, channels_dvr_advice = check_m3u_epg_compatibility(m3u_channels_data, epg_channels_data)
-    elif m3u_content and (not epg_content and not epg_errors): # M3U provided, EPG not provided/failed
-        m3u_epg_compat_issues.append("Compatibility Note: No EPG file or valid EPG URL was provided.")
-        channels_dvr_advice.append("Channels DVR *can* display guide data without an external EPG source if your M3U channels use `tvg-id`s that map to known Gracenote IDs. Otherwise, an external EPG source is required.")
-    elif epg_content and (not m3u_content and not m3u_errors): # EPG provided, M3U not provided/failed
-        m3u_epg_compat_issues.append("Compatibility Note: No M3U file or valid M3U URL was provided.")
-        channels_dvr_advice.append("EPG data alone is not sufficient for Channels DVR; it needs to be linked to channels in a playlist (via `tvg-id`).")
+    m3u_epg_compat_issues, channels_dvr_advice = check_m3u_epg_compatibility(m3u_channels_data, epg_channels_data)
+    
+    # If no EPG was provided AND no EPG errors, add a more specific note
+    # This block is now redundant due to logic inside check_m3u_epg_compatibility
+    # but left here for context if the previous version had separate logic.
+    # The new logic integrates the "no EPG provided" notes directly into the function.
+    # if not epg_content and not epg_errors:
+    #     m3u_epg_compat_issues.append("Compatibility Note: No EPG file or valid EPG URL was provided.")
+
 
     return render_template('results.html',
                            m3u_errors=m3u_errors,
