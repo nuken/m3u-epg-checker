@@ -1,21 +1,20 @@
 from flask import Flask, request, render_template, redirect, url_for, send_file, abort
-import uuid # For generating unique IDs
-import io # For in-memory file for download
+import uuid
+import io
 
-# Import the core logic functions, including is_gracenote_id
+# Import the core logic functions
 from m3u_epg_core import (
     fetch_content, 
-    check_m3u, 
+    check_m3u, # This check_m3u will now accept a 'mode' argument
     apply_m3u_fixes, 
     check_epg,
-    is_gracenote_id # <--- Import the new function
+    is_gracenote_id
 )
 
 app = Flask(__name__)
 
 # --- Temporary storage for fixed files ---
 app.temp_fixed_files = {} # Stores {file_id: bytes_content}
-
 
 # --- M3U-EPG Compatibility Checker (remains in app.py as it uses both types of data) ---
 def check_m3u_epg_compatibility(m3u_channels, epg_channels):
@@ -53,15 +52,15 @@ def check_m3u_epg_compatibility(m3u_channels, epg_channels):
             compatibility_issues.append(f"Compatibility Warning: EPG channel '{', '.join(display_names)}' (id: '{epg_id}') has no matching M3U channel via 'tvg-id'. This EPG data will not be used by Channels DVR.")
 
     # 3. General Channels DVR compatibility advice (and specific notes for missing EPG)
-    # Check if EPG was provided at all (meaning epg_content existed)
-    # The condition 'not epg_channels and not epg_errors' from upload_file implies epg_content was empty or failed.
-    # We will use the 'epg_channels' dictionary itself as an indicator of whether EPG data was successfully parsed.
-    if not epg_channels and not compatibility_issues: # Only add this note if no EPG issues were found initially
-        if m3u_channels and gracenote_ids_found_without_epg:
+    if not epg_channels and m3u_channels: # Only add this note if no EPG was successfully parsed but M3U channels exist
+        if gracenote_ids_found_without_epg:
              compatibility_issues.append("Compatibility Note: No external EPG data provided. However, some M3U channels have `tvg-id`s that appear to be Gracenote IDs. Channels DVR might use its internal Gracenote guide data for these channels.")
-        elif m3u_channels: # M3U provided, but no EPG, and no obvious Gracenote IDs
+        else:
             compatibility_issues.append("Compatibility Note: No external EPG data provided. Channels DVR will require `tvg-id`s that map to known Gracenote IDs to display guide data, or an external EPG source.")
-        elif not m3u_channels: # Neither M3U nor EPG processed
+    elif not m3u_channels and not epg_channels: # Neither M3U nor EPG processed
+        # This case is usually handled by initial M3U errors if no data given.
+        # But if no M3U data leads to no channels, and no EPG, this covers it.
+        if not m3u_errors and not epg_errors: # Avoid redundancy if explicit errors already exist
             compatibility_issues.append("Compatibility Note: No M3U or EPG data provided for compatibility check.")
 
 
@@ -84,6 +83,9 @@ def index():
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
+    # Retrieve mode selection
+    mode = request.form.get('mode', 'basic') # Default to 'basic' if not provided
+
     # Retrieve all potential input sources
     m3u_text_data = request.form.get('m3u_text_data')
     m3u_file = request.files.get('m3u_file')
@@ -148,7 +150,8 @@ def upload_file():
 
     # Only run M3U analysis if content was successfully fetched
     if m3u_content:
-        m3u_errors_analysis, m3u_channels_data, m3u_fix_suggestions = check_m3u(m3u_content)
+        # Pass the selected mode to check_m3u
+        m3u_errors_analysis, m3u_channels_data, m3u_fix_suggestions = check_m3u(m3u_content, mode) 
         m3u_errors.extend(m3u_errors_analysis)
         
         # Now apply fixes if suggestions exist
@@ -169,14 +172,6 @@ def upload_file():
     # Run compatibility checks and collect general advice
     m3u_epg_compat_issues, channels_dvr_advice = check_m3u_epg_compatibility(m3u_channels_data, epg_channels_data)
     
-    # If no EPG was provided AND no EPG errors, add a more specific note
-    # This block is now redundant due to logic inside check_m3u_epg_compatibility
-    # but left here for context if the previous version had separate logic.
-    # The new logic integrates the "no EPG provided" notes directly into the function.
-    # if not epg_content and not epg_errors:
-    #     m3u_epg_compat_issues.append("Compatibility Note: No EPG file or valid EPG URL was provided.")
-
-
     return render_template('results.html',
                            m3u_errors=m3u_errors,
                            epg_errors=epg_errors,
