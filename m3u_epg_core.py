@@ -57,45 +57,71 @@ def is_gracenote_id(tvg_id):
     gracenote_pattern = re.compile(r"^(EP|MV|SH|GR)\d{8,}(\.[FS]\.EP)?$|^\d{8,}$")
     return bool(gracenote_pattern.match(tvg_id))
 
-# Helper to find a better display name from a potentially long channel name
+# UPDATED: Helper to find a better display name from a potentially long channel name
 def get_clean_display_name(raw_channel_name, attributes):
     """
     Attempts to extract a clean, concise display name from a raw channel name string.
-    Prioritizes tvc-guide-title, then quoted parts, then truncates.
+    Prioritizes tvc-guide-title, then specific parsing of the raw_channel_name, then truncation.
     """
+    clean_name = raw_channel_name.strip()
+
     # 1. Prioritize 'tvc-guide-title' if present and not empty
     tvc_guide_title = attributes.get('tvc-guide-title', '').strip()
     if tvc_guide_title:
         return tvc_guide_title
 
-    # 2. Look for content inside quotes at the end (like in your example)
-    match = re.search(r'["\']([^"\']+)["\']\s*$', raw_channel_name)
-    if match:
-        return match.group(1).strip()
+    # --- Aggressive parsing of raw_channel_name string ---
 
-    # 3. Look for content before a long description separator (e.g., "Channel Name -- Description" or "Channel Name: Description")
-    match = re.search(r'^(.*?)\s*[-–—:]\s*(.*)$', raw_channel_name)
-    if match:
-        if len(match.group(1).strip()) < len(match.group(2).strip()) * 0.5:
-             return match.group(1).strip()
-        
-    # 4. If none of the above, try to truncate the name to a reasonable length
-    clean_name = raw_channel_name.replace('"', '').replace("'", '').strip()
-    
-    clean_name = re.sub(r'\s*\.\s*(HD|SD|4K|UHD|UHD1)\s*$', r'.\1', clean_name, flags=re.IGNORECASE).strip()
-    clean_name = re.sub(r'\s+\(.*\)$', '', clean_name).strip()
-    clean_name = re.sub(r'\s*-\s*.*$', '', clean_name).strip()
-    clean_name = re.sub(r'\s*:\s*.*$', '', clean_name).strip()
+    # 2. Look for content before the *first* comma if the name appears structured like "Short Name",Long Description
+    # This handles "Pluto TV Trending Now",there's always a film...
+    if ',' in clean_name:
+        first_part = clean_name.split(',', 1)[0].strip()
+        # If the first part is enclosed in quotes, strip them
+        if (first_part.startswith('"') and first_part.endswith('"')) or \
+           (first_part.startswith("'") and first_part.endswith("'")):
+            return first_part[1:-1].strip()
+        # Otherwise, if it's reasonably short, it might be the clean name
+        if len(first_part) < 50: # Heuristic: if first part is not super long
+            return first_part
 
-    if len(clean_name) > 60:
-        clean_name = clean_name[:57] + '...'
+    # 3. Look for content inside any quotes within the whole string
+    # This might catch names like 'Channel Name' within a longer string
+    match_quoted = re.search(r'["\']([^"\']+)["\']', clean_name)
+    if match_quoted:
+        # If multiple quoted sections, prioritize the first or a reasonable length one.
+        # For simplicity, we'll take the first quoted group found.
+        candidate = match_quoted.group(1).strip()
+        if candidate and len(candidate) < 60: # Ensure it's not a very long quoted description itself
+            return candidate
 
-    clean_name = re.sub(r'[^a-zA-Z0-9\s.,&+\-:]', '', clean_name).strip()
+    # 4. Fallback: Aggressive cleaning and truncation from the beginning
+    # Remove common descriptive patterns that might appear after the name
+    clean_name = re.sub(r'[\"\']', '', clean_name).strip() # Remove all quotes first
+
+    # Remove descriptions typically separated by "--", ":", " - ", etc.
+    # Try longest separators first for clearer splits
+    clean_name = re.sub(r'\s+--\s+.*$', '', clean_name).strip()
+    clean_name = re.sub(r'\s+-\s+.*$', '', clean_name).strip()
+    clean_name = re.sub(r'\s*:\s+.*$', '', clean_name).strip()
+
+    # Remove content within parentheses or square brackets
+    clean_name = re.sub(r'\s*\(.*\)$', '', clean_name).strip()
+    clean_name = re.sub(r'\s*\[.*\]$', '', clean_name).strip()
+
+    # Remove common trailing terms like "HD", "SD", "Live" if they are standalone
+    clean_name = re.sub(r'\s+(HD|SD|Live|TV|Channel)\s*$', '', clean_name, flags=re.IGNORECASE).strip()
+
+    # Truncate if still very long, add ellipsis
+    if len(clean_name) > 50: # Slightly shorter target length for tvg-name
+        clean_name = clean_name[:47].strip() + '...'
+
+    # Final general cleanup for display purposes
+    clean_name = re.sub(r'[^\w\s.,&+\-:]', '', clean_name).strip() 
 
     return clean_name if clean_name else "Unknown Channel"
 
 
-def check_m3u(file_content, mode='advanced'): # Add mode parameter with 'advanced' as default
+def check_m3u(file_content, mode='advanced'):
     """
     Parses M3U content, identifies errors/warnings, and suggests automated fixes based on mode.
     Mode: 'basic' for essential checks, 'advanced' for comprehensive checks.
@@ -130,13 +156,13 @@ def check_m3u(file_content, mode='advanced'): # Add mode parameter with 'advance
 
             duration = match.group(1)
             attributes_str = match.group(2)
-            channel_name = match.group(3).strip()
+            channel_name = match.group(3).strip() # This is the full raw channel name after the comma
 
             if not channel_name:
                 errors.append(f"M3U Error: Channel name missing in EXTINF line (Line {line_num_display}): {line}")
 
             attributes = {}
-            for attr_match in re.finditer(r'(\S+)="([^"]*)"', attributes_str):
+            for attr_match in re.finditer(r'(\S+)="([^"]*)"', attributes_match.group(2)): # Fixed here: should be attributes_str, not attr_match.group(2)
                 attributes[attr_match.group(1).lower()] = attr_match.group(2)
 
             current_line_attributes = attributes.copy()
