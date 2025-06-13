@@ -71,13 +71,24 @@ def get_clean_display_name(raw_channel_name_after_comma, attributes):
     """
     Attempts to extract a clean, concise display name for tvg-name.
     Prioritizes:
-    1. 'tvc-guide-title' attribute from the M3U line's attributes.
-    2. Parsing the 'raw_channel_name_after_comma' (text after the last comma of #EXTINF)
-       for a clean title if 'tvc-guide-title' is not available.
+    1. 'tvg-name' attribute from the M3U line's attributes (new priority).
+    2. 'tvc-guide-title' attribute from the M3U line's attributes.
+    3. Parsing the 'raw_channel_name_after_comma' (text after the last comma of #EXTINF)
+       for a clean title if the above are not available.
     """
     clean_name_candidate = raw_channel_name_after_comma.strip()
 
-    # 1. Prioritize 'tvc-guide-title' from the parsed attributes dictionary
+    # 1. Prioritize 'tvg-name' from the parsed attributes dictionary
+    tvg_name_from_attrs = attributes.get('tvg-name', '').strip()
+    if tvg_name_from_attrs:
+        # If tvg-name already exists and looks reasonable (not just a pure number, not extremely long and clearly malformed)
+        # We can add more robust checks here if needed, but for now, if it's there and not empty, use it.
+        # Avoid using it if it matches the 'raw_channel_name_after_comma' and that raw name is clearly too long/complex
+        # or if the tvg_name_from_attrs itself is a clearly bad value (e.g., just a stream URL part)
+        if not re.fullmatch(r'\d+', tvg_name_from_attrs) and len(tvg_name_from_attrs) < 60: # Basic sanity check for tvg-name content
+            return tvg_name_from_attrs
+
+    # 2. Prioritize 'tvc-guide-title' from the parsed attributes dictionary (original logic moved down)
     tvc_guide_title = attributes.get('tvc-guide-title', '').strip()
     if tvc_guide_title:
         return tvc_guide_title
@@ -85,7 +96,7 @@ def get_clean_display_name(raw_channel_name_after_comma, attributes):
     # --- Fallback to parsing the raw_channel_name_after_comma string ---
     # This is the text after the last comma on the EXTINF line.
 
-    # 2. Try to extract content from the first quoted string at the very beginning
+    # 3. Try to extract content from the first quoted string at the very beginning
     # E.g., "Pluto TV Trending Now",description...
     match_initial_quoted = re.match(r'^["\']([^"\']+)["\']', clean_name_candidate)
     if match_initial_quoted:
@@ -93,7 +104,7 @@ def get_clean_display_name(raw_channel_name_after_comma, attributes):
         if candidate and len(candidate) < 60:
             return candidate
 
-    # 3. Try to extract content before the first comma in clean_name_candidate
+    # 4. Try to extract content before the first comma in clean_name_candidate
     # This targets cases like "Channel Name, Some long description" where the name is first.
     if ',' in clean_name_candidate:
         first_segment = clean_name_candidate.split(',', 1)[0].strip()
@@ -103,7 +114,7 @@ def get_clean_display_name(raw_channel_name_after_comma, attributes):
             if candidate:
                 return candidate
     
-    # 4. Ultimate Fallback: Aggressive cleaning and truncation of raw_channel_name_after_comma
+    # 5. Ultimate Fallback: Aggressive cleaning and truncation of raw_channel_name_after_comma
     # Remove all quotes first for consistent processing
     clean_name_candidate = re.sub(r'[\"\']', '', clean_name_candidate).strip() 
 
@@ -127,7 +138,6 @@ def get_clean_display_name(raw_channel_name_after_comma, attributes):
     clean_name_candidate = re.sub(r'[^\w\s.,&+\-:]', '', clean_name_candidate).strip() 
 
     return clean_name_candidate if clean_name_candidate else "Unknown Channel"
-
 
 def check_m3u(file_content, mode='advanced'):
     """
