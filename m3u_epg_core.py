@@ -54,7 +54,7 @@ def is_gracenote_id(tvg_id):
     if not tvg_id:
         return False
     
-    gracenote_pattern = re.compile(r"^(EP|MV|SH|GR)\d{8,}(\.[FS]\.EP)?$|^\d{8,}$")
+    gracenote_pattern = re.compile(r"^(EP|MV|SH|GR)\d{8,}(\.[FS]\.EP)?<span class="math-inline">\|^\\d\{8,\}</span>")
     return bool(gracenote_pattern.match(tvg_id))
 
 # UPDATED: Helper to find a better display name from a potentially long channel name
@@ -63,61 +63,60 @@ def get_clean_display_name(raw_channel_name, attributes):
     Attempts to extract a clean, concise display name from a raw channel name string.
     Prioritizes tvc-guide-title, then specific parsing of the raw_channel_name, then truncation.
     """
-    clean_name = raw_channel_name.strip()
+    clean_name_candidate = raw_channel_name.strip()
 
     # 1. Prioritize 'tvc-guide-title' if present and not empty
     tvc_guide_title = attributes.get('tvc-guide-title', '').strip()
     if tvc_guide_title:
         return tvc_guide_title
 
-    # --- Aggressive parsing of raw_channel_name string (after the last comma of EXTINF) ---
+    # --- Aggressive parsing of raw_channel_name string (the part after the last comma of EXTINF) ---
 
-    # Try to extract content that looks like a clean name from the beginning of the string.
-    # Often, the desired name is the first part, before the first internal quote or long description.
-
-    # 2. Extract content from the first quoted string at the start, if it exists
+    # 2. Try to extract content from the first quoted string at the very beginning
     # E.g., "Pluto TV Trending Now",description...
-    match_initial_quoted = re.match(r'^["\']([^"\']+)["\']', clean_name)
+    # This handles cases where the channel name itself starts and ends with quotes,
+    # or where the meaningful part is the first quoted segment.
+    match_initial_quoted = re.match(r'^["\']([^"\']+)["\']', clean_name_candidate)
     if match_initial_quoted:
         candidate = match_initial_quoted.group(1).strip()
-        if candidate: # Ensure it's not an empty quote
+        if candidate and len(candidate) < 60: # Ensure it's not an empty quote or excessively long
             return candidate
 
-    # 3. Extract content before the first comma (if not handled by quotes above)
-    # E.g., Pluto TV Trending Now,description...
-    if ',' in clean_name:
-        candidate = clean_name.split(',', 1)[0].strip()
-        # If this candidate is reasonably short and doesn't contain obvious descriptive parts, use it.
-        if candidate and len(candidate) < 50: # Heuristic length
-            # Further clean this initial candidate from any stray quotes
-            candidate = re.sub(r'[\"\']', '', candidate).strip()
-            return candidate
+    # 3. Try to extract content before the first comma, if not handled by quotes above.
+    # This specifically targets cases like "Channel Name, Some long description"
+    if ',' in clean_name_candidate:
+        first_segment = clean_name_candidate.split(',', 1)[0].strip()
+        # Ensure this segment isn't just a stray quote or too short to be a name
+        if first_segment and len(first_segment) > 2 and not re.match(r'^[\"\']<span class="math-inline">', first\_segment\)\:
+\# Also, check if it already seems like the desired name before a description
+\# \(e\.g\., "Pluto TV Trending Now", description\.\.\.\)\. Remove any remaining quotes\.
+candidate \= re\.sub\(r'\[\\"\\'\]', '', first\_segment\)\.strip\(\)
+if candidate\:
+return candidate
+\# 4\. Fallback\: Aggressive cleaning and truncation from the beginning
+\# Remove all quotes first for consistent processing
+clean\_name\_candidate \= re\.sub\(r'\[\\"\\'\]', '', clean\_name\_candidate\)\.strip\(\) 
+\# Remove descriptions typically separated by "\-\-", "\:", " \- ", etc\.
+\# Try longest separators first for clearer splits
+clean\_name\_candidate \= re\.sub\(r'\\s\+\-\-\\s\+\.\*</span>', '', clean_name_candidate).strip()
+    clean_name_candidate = re.sub(r'\s+-\s+.*<span class="math-inline">', '', clean\_name\_candidate\)\.strip\(\)
+clean\_name\_candidate \= re\.sub\(r'\\s\*\:\\s\+\.\*</span>', '', clean_name_candidate).strip()
 
-    # 4. Fallback: Aggressive cleaning and truncation from the beginning
-    # Remove all quotes first for consistent processing
-    clean_name = re.sub(r'[\"\']', '', clean_name).strip() 
+    # Remove content within parentheses or square brackets that often contain descriptions
+    clean_name_candidate = re.sub(r'\s*\(.*\)<span class="math-inline">', '', clean\_name\_candidate\)\.strip\(\)
+clean\_name\_candidate \= re\.sub\(r'\\s\*\\\[\.\*\\\]</span>', '', clean_name_candidate).strip()
 
-    # Remove descriptions typically separated by "--", ":", " - ", etc.
-    # Try longest separators first for clearer splits
-    clean_name = re.sub(r'\s+--\s+.*$', '', clean_name).strip()
-    clean_name = re.sub(r'\s+-\s+.*$', '', clean_name).strip()
-    clean_name = re.sub(r'\s*:\s+.*$', '', clean_name).strip()
-
-    # Remove content within parentheses or square brackets
-    clean_name = re.sub(r'\s*\(.*\)$', '', clean_name).strip()
-    clean_name = re.sub(r'\s*\[.*\]$', '', clean_name).strip()
-
-    # Remove common trailing terms like "HD", "SD", "Live" if they are standalone
-    clean_name = re.sub(r'\s+(HD|SD|Live|TV|Channel|Show|Movie|Series)\s*$', '', clean_name, flags=re.IGNORECASE).strip()
+    # Remove common trailing descriptive terms (case-insensitive)
+    clean_name_candidate = re.sub(r'\s+(HD|SD|Live|TV|Channel|Show|Movie|Series|Now)\s*$', '', clean_name_candidate, flags=re.IGNORECASE).strip()
 
     # Truncate if still very long, add ellipsis
-    if len(clean_name) > 50: # Slightly shorter target length for tvg-name
-        clean_name = clean_name[:47].strip() + '...'
+    if len(clean_name_candidate) > 50: # Slightly shorter target length for tvg-name
+        clean_name_candidate = clean_name_candidate[:47].strip() + '...'
 
-    # Final general cleanup for display purposes
-    clean_name = re.sub(r'[^\w\s.,&+\-:]', '', clean_name).strip() 
+    # Final general cleanup for display purposes: remove non-essential punctuation
+    clean_name_candidate = re.sub(r'[^\w\s.,&+\-:]', '', clean_name_candidate).strip() 
 
-    return clean_name if clean_name else "Unknown Channel"
+    return clean_name_candidate if clean_name_candidate else "Unknown Channel"
 
 
 def check_m3u(file_content, mode='advanced'):
@@ -265,213 +264,4 @@ def check_m3u(file_content, mode='advanced'):
                 errors.append(f"M3U Channels DVR Suggestion: Stream URL for '{channel_name}' (Line {line_num_display}) might not be HLS (.m3u8) or MPEG-TS (.ts). Channels DVR generally prefers HLS or raw MPEG-TS streams.")
             
             channels.append({
-                'name': channel_name, # This remains the original full name for record keeping
-                'tvg_id': current_line_attributes.get('tvg-id', ''),
-                'tvg_name': current_line_attributes.get('tvg-name', ''), # This will be the cleaned name
-                'tvg_logo': current_line_attributes.get('tvg-logo', attributes.get('tvg-logo', '').strip()),
-                'group_title': current_line_attributes.get('group-title', ''),
-                'stream_url': stream_url
-            })
-
-        elif line.startswith('#EXTVLCOPT:'):
-            pass # Explicitly ignore VLC options
-        
-        elif not line.startswith('#EXTM3U'):
-            errors.append(f"M3U Warning: Unexpected line (might be ignored) (Line {line_num_display}): {line}")
-        
-        i += 1
-    
-    # Channel count warning applies to both modes as it's a Channels DVR performance consideration
-    if channel_count > 750:
-        errors.append(f"M3U Channels DVR Warning: Detected {channel_count} channels. Channels DVR might experience performance issues or limits with more than ~750 channels per M3U playlist.")
-
-    return errors, channels, fix_suggestions
-
-def apply_m3u_fixes(original_content, fix_suggestions):
-    """
-    Applies a list of fix suggestions to the original M3U content to generate a fixed version.
-    Fixes are applied in reverse order of line number to prevent index shifting issues.
-    """
-    fixed_lines_array = original_content.splitlines(keepends=True) 
-    fix_suggestions_sorted = sorted(fix_suggestions, key=lambda x: x['line_num'], reverse=True)
-
-    for fix in fix_suggestions_sorted:
-        fix_type = fix['type']
-        line_idx = fix['line_num'] - 1
-
-        if line_idx < 0 or line_idx >= len(fixed_lines_array):
-            print(f"Warning: Attempted to apply fix at invalid line index {line_idx}. Skipping fix: {fix}")
-            continue
-
-        if fix_type == 'rebuild_extinf_attributes':
-            duration = fix['duration']
-            channel_name = fix['channel_name']
-            final_attributes = fix['final_attributes']
-
-            new_attributes_str = format_attributes_for_extinf(final_attributes)
-            new_extinf_line_content = f'#EXTINF:{duration} {new_attributes_str},{channel_name}'
-            fixed_lines_array[line_idx] = new_extinf_line_content + "\n"
-            
-        elif fix_type == 'reorder_stream_url':
-            extinf_line_idx = fix['line_num'] - 1
-            original_stream_line_idx = fix['original_stream_line_num'] - 1
-            stream_url = fix['stream_url']
-
-            line_after_extinf = fixed_lines_array[extinf_line_idx + 1].strip() if (extinf_line_idx + 1) < len(fixed_lines_array) else ""
-            if line_after_extinf == stream_url.strip():
-                continue
-
-            if original_stream_line_idx < len(fixed_lines_array) and \
-               fixed_lines_array[original_stream_line_idx].strip() == stream_url.strip():
-                del fixed_lines_array[original_stream_line_idx]
-            else:
-                print(f"Warning: Stream URL for channel '{fix['channel_name']}' not found at expected original line {fix['original_stream_line_num']} during reorder fix. Attempting to insert only.")
-
-            fixed_lines_array.insert(extinf_line_idx + 1, stream_url + "\n")
-
-    return "".join(fixed_lines_array)
-
-def parse_xmltv_datetime(dt_str):
-    """Parses XMLTV datetime string (YYYYMMDDHHMMSS +/-ZZZZ) into datetime object."""
-    try:
-        match = re.match(r'(\d{14})\s*([+-]\d{4})?', dt_str)
-        if match:
-            dt_part = match.group(1)
-            dt_obj = datetime.strptime(dt_part, '%Y%m%d%H%M%S')
-            return dt_obj
-        return None
-    except ValueError:
-        return None
-
-def check_epg(file_content):
-    """
-    Parses EPG XMLTV content and identifies errors/warnings.
-    Returns (list_of_errors, dict_of_channels, list_of_programs).
-    """
-    errors = []
-    channels = {}
-    programs_by_channel = {}
-    all_program_data = []
-
-    try:
-        root = etree.fromstring(file_content.encode('utf-8'))
-        if root.tag != 'tv':
-            errors.append("EPG Error: Root element is not 'tv'. Expected '<tv>' tag.")
-
-        epg_channel_ids = set()
-        for channel_element in root.findall('channel'):
-            channel_id = channel_element.get('id')
-            if not channel_id:
-                errors.append("EPG Error: Channel element missing 'id' attribute.")
-                continue
-
-            if channel_id in epg_channel_ids:
-                errors.append(f"EPG Error: Duplicate 'channel id' '{channel_id}' found in EPG file. Each channel must have a unique ID.")
-            epg_channel_ids.add(channel_id)
-
-            display_names = channel_element.findall('display-name')
-            if not display_names:
-                errors.append(f"EPG Channels DVR Warning: Channel '{channel_id}' missing 'display-name'.")
-            
-            channels[channel_id] = {
-                'display_names': [name.text for name in display_names if name.text],
-                'icon': channel_element.find('icon').get('src') if channel_element.find('icon') is not None else None
-            }
-            programs_by_channel[channel_id] = []
-
-        for program_element in root.findall('programme'):
-            channel_id = program_element.get('channel')
-            start_time_str = program_element.get('start')
-            stop_time_str = program_element.get('stop')
-
-            title_element = program_element.find('title')
-            program_title = title_element.text if title_element is not None and title_element.text else 'Unknown Title'
-
-            program_errors_local = []
-
-            if not channel_id:
-                program_errors_local.append("Program element missing 'channel' attribute.")
-            
-            start_dt, stop_dt = None, None
-            if not start_time_str:
-                program_errors_local.append("Missing 'start' time.")
-            else:
-                start_dt = parse_xmltv_datetime(start_time_str)
-                if start_dt is None:
-                    program_errors_local.append(f"Invalid 'start' time format: '{start_time_str}'.")
-
-            if not stop_time_str:
-                program_errors_local.append("Missing 'stop' time.")
-            else:
-                stop_dt = parse_xmltv_datetime(stop_time_str)
-                if stop_dt is None:
-                    program_errors_local.append(f"Invalid 'stop' time format: '{stop_time_str}'.")
-
-            if start_dt and stop_dt and start_dt >= stop_dt:
-                 program_errors_local.append(f"Start time ({start_time_str}) is equal to or after stop time ({stop_time_str}).")
-
-            title_elements = program_element.findall('title')
-            if not title_elements or not any(t.text for t in title_elements):
-                program_errors_local.append("Missing 'title'. Essential for guide display.")
-            
-            description_elements = program_element.findall('desc')
-            if not description_elements or not any(d.text for d in description_elements):
-                program_errors_local.append("Suggestion: Missing 'desc' (description).")
-
-            category_elements = program_element.findall('category')
-            is_movie = any(c.text and c.text.lower() == 'movie' for c in category_elements)
-
-            series_id_attr = program_element.get('series-id')
-            if not series_id_attr and not is_movie:
-                program_errors_local.append("Suggestion: Missing 'series-id'.")
-
-            episode_num_elements = program_element.findall('episode-num')
-            if (not episode_num_elements or not any(e.text for e in episode_num_elements)) and not is_movie:
-                program_errors_local.append("Suggestion: Missing 'episode-num'.")
-
-            if program_errors_local:
-                consolidated_msg = f"EPG Program Error/Warning: Channel '{channel_id}' Program ('{program_title}' from {start_time_str or 'N/A'} to {stop_time_str or 'N/A'}): "
-                consolidated_msg += "; ".join(program_errors_local)
-                errors.append(consolidated_msg)
-
-            if channel_id in programs_by_channel:
-                programs_by_channel[channel_id].append({
-                    'start_dt': start_dt,
-                    'stop_dt': stop_dt,
-                    'title': program_title,
-                    'start_time_str': start_time_str,
-                    'stop_time_str': stop_time_str
-                })
-            else:
-                errors.append(f"EPG Error: Program references unknown channel ID '{channel_id}'.")
-
-    except etree.XMLSyntaxError as e:
-        errors.append(f"EPG XML Syntax Error: The EPG file is not well-formed XML: {e}")
-    except Exception as e:
-        errors.append(f"EPG General Error: An unexpected error occurred during EPG parsing: {e}")
-
-    for channel_id, progs in programs_by_channel.items():
-        progs_valid_times = [p for p in progs if p['start_dt'] and p['stop_dt']]
-        progs_sorted = sorted(progs_valid_times, key=lambda x: x['start_dt'])
-        
-        for i in range(len(progs_sorted) - 1):
-            current_prog = progs_sorted[i]
-            next_prog = progs_sorted[i+1]
-
-            if current_prog['stop_dt'] > next_prog['start_dt']:
-                errors.append(
-                    f"EPG Channels DVR Warning: Overlapping programs for channel '{channel_id}': "
-                    f"'{current_prog['title']}' ({current_prog['start_time_str']} - {current_prog['stop_time_str']}) "
-                    f"overlaps with '{next_prog['title']}' ({next_prog['start_time_str']} - {next_prog['stop_time_str']})."
-                )
-    
-    for channel_id, progs in programs_by_channel.items():
-        for prog in progs:
-            all_program_data.append({
-                'channel_id': channel_id,
-                'start': prog['start_time_str'],
-                'stop': prog['stop_time_str'],
-                'title': prog['title']
-            })
-
-    return errors, channels, all_program_data
+                'name': channel_name, # This remains the original full name
