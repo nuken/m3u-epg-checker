@@ -71,80 +71,74 @@ def get_clean_display_name(raw_channel_name_after_comma, attributes):
     """
     Attempts to extract a clean, concise display name for tvg-name.
     Prioritizes:
-    1. 'tvg-name' attribute from the M3U line's attributes, with cleaning.
+    1. 'tvg-name' attribute from the M3U line's attributes, with basic cleaning.
     2. 'tvc-guide-title' attribute from the M3U line's attributes.
-    3. Parsing the 'raw_channel_name_after_comma' (text after the last comma of #EXTINF)
-       for a clean title if the above are not available.
+    3. Aggressive parsing of the 'raw_channel_name_after_comma' for the primary name.
     """
-    clean_name_candidate = raw_channel_name_after_comma.strip()
+    # Defensive copy for manipulation
+    candidate_from_raw_name = raw_channel_name_after_comma.strip()
 
     # 1. Prioritize and clean 'tvg-name' from the parsed attributes dictionary
     tvg_name_from_attrs = attributes.get('tvg-name', '').strip()
     if tvg_name_from_attrs:
-        # Check if the extracted tvg_name_from_attrs contains an unexpected comma.
-        # This addresses cases like tvg-name="Name",description where the parsing regex
-        # might have incorrectly included the description as part of tvg-name.
-        if ',' in tvg_name_from_attrs:
+        # If the extracted tvg_name_from_attrs itself contains an unescaped comma,
+        # it means the original M3U was malformed or our attribute regex failed.
+        # We try to salvage the part before the first unescaped comma.
+        if '"' not in tvg_name_from_attrs and "'" not in tvg_name_from_attrs and ',' in tvg_name_from_attrs:
+             # Only split if no quotes are within the string, suggesting an unquoted, comma-separated value
             cleaned_tvg_name = tvg_name_from_attrs.split(',', 1)[0].strip()
-            # If after splitting, the name looks reasonable and is not empty, use it.
             if cleaned_tvg_name and len(cleaned_tvg_name) < 60 and not re.fullmatch(r'\d+', cleaned_tvg_name):
                 return cleaned_tvg_name
         else:
-            # If no comma, and the name looks reasonable, use it directly.
+            # For properly quoted tvg-name or names without internal commas, use directly if reasonable
             if tvg_name_from_attrs and len(tvg_name_from_attrs) < 60 and not re.fullmatch(r'\d+', tvg_name_from_attrs):
                 return tvg_name_from_attrs
-
 
     # 2. Prioritize 'tvc-guide-title' from the parsed attributes dictionary
     tvc_guide_title = attributes.get('tvc-guide-title', '').strip()
     if tvc_guide_title:
         return tvc_guide_title
 
-    # --- Fallback to parsing the raw_channel_name_after_comma string ---
-    # This is the text after the last comma on the EXTINF line.
-
-    # 3. Try to extract content from the first quoted string at the very beginning
-    # E.g., "Pluto TV Trending Now",description...
-    match_initial_quoted = re.match(r'^["\']([^"\']+)["\']', clean_name_candidate)
-    if match_initial_quoted:
-        candidate = match_initial_quoted.group(1).strip()
-        if candidate and len(candidate) < 60:
-            return candidate
-
-    # 4. Try to extract content before the first comma in clean_name_candidate
-    # This targets cases like "Channel Name, Some long description" where the name is first.
-    if ',' in clean_name_candidate:
-        first_segment = clean_name_candidate.split(',', 1)[0].strip()
-        # Ensure this segment isn't just a stray quote or too short to be a name
-        if first_segment and len(first_segment) > 2 and not re.match(r'^[\"\']$', first_segment):
-            candidate = re.sub(r'[\"\']', '', first_segment).strip()
-            if candidate:
-                return candidate
+    # --- Fallback to parsing the raw_channel_name_after_comma string (the text AFTER the last comma in EXTINF) ---
     
-    # 5. Ultimate Fallback: Aggressive cleaning and truncation of raw_channel_name_after_comma
-    # Remove all quotes first for consistent processing
-    clean_name_candidate = re.sub(r'[\"\']', '', clean_name_candidate).strip() 
+    # First, strip leading/trailing quotes from the raw_channel_name_after_comma if present.
+    # This helps if the name is like "Channel Name, description" but the whole thing is quoted.
+    candidate_from_raw_name = re.sub(r'^\"|\"$', '', candidate_from_raw_name).strip()
 
-    # Remove descriptions typically separated by "--", ":", " - ", etc.
-    clean_name_candidate = re.sub(r'\s+--\s+.*$', '', clean_name_candidate).strip()
-    clean_name_candidate = re.sub(r'\s+-\s+.*$', '', clean_name_candidate).strip()
-    clean_name_candidate = re.sub(r'\s*:\s+.*$', '', clean_name_candidate).strip()
+    # Try to find the *first* clean segment that looks like a name.
+    # This specifically targets cases like "Channel Name, Description Text" or "Channel Name" (Description)
+    # If a comma exists *within* the raw channel name part, assume the actual name is before it.
+    if ',' in candidate_from_raw_name:
+        potential_name = candidate_from_raw_name.split(',', 1)[0].strip()
+        # Ensure it's not empty and doesn't look like an attribute (e.g., "http://...")
+        if potential_name and len(potential_name) > 2 and not potential_name.startswith('http'):
+            # Aggressively clean this potential name from trailing descriptions/brackets
+            potential_name = re.sub(r'\s+--\s+.*$', '', potential_name).strip()
+            potential_name = re.sub(r'\s+-\s+.*$', '', potential_name).strip()
+            potential_name = re.sub(r'\s*:\s+.*$', '', potential_name).strip()
+            potential_name = re.sub(r'\s*\(.*\)$', '', potential_name).strip()
+            potential_name = re.sub(r'\s*\[.*\]$', '', potential_name).strip()
+            potential_name = re.sub(r'[\"\']', '', potential_name).strip() # Remove any leftover quotes
 
-    # Remove content within parentheses or square brackets (often descriptions)
-    clean_name_candidate = re.sub(r'\s*\(.*\)$', '', clean_name_candidate).strip()
-    clean_name_candidate = re.sub(r'\s*\[.*\]$', '', clean_name_candidate).strip()
+            if potential_name:
+                return potential_name
 
-    # Remove common trailing descriptive terms (case-insensitive)
-    clean_name_candidate = re.sub(r'\s+(HD|SD|Live|TV|Channel|Show|Movie|Series|Now)\s*$', '', clean_name_candidate, flags=re.IGNORECASE).strip()
+    # Ultimate Fallback: Aggressive cleaning and truncation of the entire raw_channel_name_after_comma
+    # (after attempts to split by comma have failed to yield a good name, or no comma was present)
+    cleaned_name = re.sub(r'[\"\']', '', candidate_from_raw_name).strip() 
+    cleaned_name = re.sub(r'\s+--\s+.*$', '', cleaned_name).strip()
+    cleaned_name = re.sub(r'\s+-\s+.*$', '', cleaned_name).strip()
+    cleaned_name = re.sub(r'\s*:\s+.*$', '', cleaned_name).strip()
+    cleaned_name = re.sub(r'\s*\(.*\)$', '', cleaned_name).strip()
+    cleaned_name = re.sub(r'\s*\[.*\]$', '', cleaned_name).strip()
+    cleaned_name = re.sub(r'\s+(HD|SD|Live|TV|Channel|Show|Movie|Series|Now)\s*$', '', cleaned_name, flags=re.IGNORECASE).strip()
 
-    # Truncate if still very long, add ellipsis
-    if len(clean_name_candidate) > 50:
-        clean_name_candidate = clean_name_candidate[:47].strip() + '...'
+    if len(cleaned_name) > 50:
+        cleaned_name = cleaned_name[:47].strip() + '...'
 
-    # Final general cleanup for display purposes: remove non-essential punctuation
-    clean_name_candidate = re.sub(r'[^\w\s.,&+\-:]', '', clean_name_candidate).strip() 
+    cleaned_name = re.sub(r'[^\w\s.,&+\-:]', '', cleaned_name).strip() 
 
-    return clean_name_candidate if clean_name_candidate else "Unknown Channel"
+    return cleaned_name if cleaned_name else "Unknown Channel"
 
 def check_m3u(file_content, mode='advanced'):
     """
