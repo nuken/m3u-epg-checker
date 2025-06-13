@@ -60,62 +60,62 @@ def is_gracenote_id(tvg_id):
 # UPDATED: Helper to find a better display name from a potentially long channel name
 def get_clean_display_name(raw_channel_name, attributes):
     """
-    Attempts to extract a clean, concise display name from a raw channel name string.
-    Prioritizes tvc-guide-title, then specific parsing of the raw_channel_name, then truncation.
+    Attempts to extract a clean, concise display name.
+    Prioritizes:
+    1. 'tvc-guide-title' attribute from the M3U line.
+    2. 'tvg-name' attribute from the M3U line (cleaned).
+    3. Parsing the 'raw_channel_name' (text after the last comma) for a clean title.
     """
-    clean_name_candidate = raw_channel_name.strip()
-
-    # 1. Prioritize 'tvc-guide-title' if present and not empty
+    # 1. Prioritize 'tvc-guide-title' if present and not empty from the attributes dict
     tvc_guide_title = attributes.get('tvc-guide-title', '').strip()
     if tvc_guide_title:
         return tvc_guide_title
 
-    # --- Aggressive parsing of raw_channel_name string (the part after the last comma of EXTINF) ---
+    # 2. Prioritize 'tvg-name' attribute if present and not empty, and clean it.
+    # We apply some basic cleaning to existing tvg-name as well.
+    existing_tvg_name_attr = attributes.get('tvg-name', '').strip()
+    if existing_tvg_name_attr:
+        # Apply light cleaning just in case existing tvg-name isn't perfect
+        cleaned_existing_tvg_name = re.sub(r'[\"\']', '', existing_tvg_name_attr).strip()
+        if len(cleaned_existing_tvg_name) > 50: # If existing is still too long, try to truncate
+            cleaned_existing_tvg_name = cleaned_existing_tvg_name[:47].strip() + '...'
+        return cleaned_existing_tvg_name
 
-    # 2. Try to extract content from the first quoted string at the very beginning
+    # --- Fallback to parsing the raw_channel_name string (the text after the last comma) ---
+    clean_name_candidate = raw_channel_name.strip()
+
+    # 3. Try to extract content from the first quoted string at the very beginning of raw_channel_name
     # E.g., "Pluto TV Trending Now",description...
-    # This handles cases where the channel name itself starts and ends with quotes,
-    # or where the meaningful part is the first quoted segment.
     match_initial_quoted = re.match(r'^["\']([^"\']+)["\']', clean_name_candidate)
     if match_initial_quoted:
         candidate = match_initial_quoted.group(1).strip()
         if candidate and len(candidate) < 60: # Ensure it's not an empty quote or excessively long
             return candidate
 
-    # 3. Try to extract content before the first comma, if not handled by quotes above.
+    # 4. Try to extract content before the first comma in raw_channel_name
     # This specifically targets cases like "Channel Name, Some long description"
     if ',' in clean_name_candidate:
         first_segment = clean_name_candidate.split(',', 1)[0].strip()
-        # Ensure this segment isn't just a stray quote or too short to be a name
         if first_segment and len(first_segment) > 2 and not re.match(r'^[\"\']$', first_segment):
-            # Also, check if it already seems like the desired name before a description
-            # (e.g., "Pluto TV Trending Now", description...). Remove any remaining quotes.
             candidate = re.sub(r'[\"\']', '', first_segment).strip()
             if candidate:
                 return candidate
     
-    # 4. Fallback: Aggressive cleaning and truncation from the beginning
-    # Remove all quotes first for consistent processing
+    # 5. Ultimate Fallback: Aggressive cleaning and truncation of raw_channel_name
     clean_name_candidate = re.sub(r'[\"\']', '', clean_name_candidate).strip() 
 
-    # Remove descriptions typically separated by "--", ":", " - ", etc.
-    # Try longest separators first for clearer splits
     clean_name_candidate = re.sub(r'\s+--\s+.*$', '', clean_name_candidate).strip()
     clean_name_candidate = re.sub(r'\s+-\s+.*$', '', clean_name_candidate).strip()
     clean_name_candidate = re.sub(r'\s*:\s+.*$', '', clean_name_candidate).strip()
 
-    # Remove content within parentheses or square brackets that often contain descriptions
     clean_name_candidate = re.sub(r'\s*\(.*\)$', '', clean_name_candidate).strip()
     clean_name_candidate = re.sub(r'\s*\[.*\]$', '', clean_name_candidate).strip()
 
-    # Remove common trailing descriptive terms (case-insensitive)
     clean_name_candidate = re.sub(r'\s+(HD|SD|Live|TV|Channel|Show|Movie|Series|Now)\s*$', '', clean_name_candidate, flags=re.IGNORECASE).strip()
 
-    # Truncate if still very long, add ellipsis
-    if len(clean_name_candidate) > 50: # Slightly shorter target length for tvg-name
+    if len(clean_name_candidate) > 50:
         clean_name_candidate = clean_name_candidate[:47].strip() + '...'
 
-    # Final general cleanup for display purposes: remove non-essential punctuation
     clean_name_candidate = re.sub(r'[^\w\s.,&+\-:]', '', clean_name_candidate).strip() 
 
     return clean_name_candidate if clean_name_candidate else "Unknown Channel"
@@ -169,11 +169,10 @@ def check_m3u(file_content, mode='advanced'):
             modified_attributes_for_fix = False
 
             tvg_id = attributes.get('tvg-id', '').strip()
-            tvg_name = attributes.get('tvg-name', '').strip()
+            tvg_name_from_attrs = attributes.get('tvg-name', '').strip() # Get current tvg-name attribute value
             group_title = attributes.get('group-title', '').strip()
 
-            # Determine the suggested_display_name for tvg-name and potentially tvg-id
-            # Always pass the raw_channel_name and original attributes for clean display name derivation
+            # Determine the suggested_display_name using the new logic
             suggested_display_name = get_clean_display_name(raw_channel_name, attributes)
 
             # --- Basic Mode Checks & Fixes ---
@@ -193,22 +192,21 @@ def check_m3u(file_content, mode='advanced'):
             # --- Advanced Mode Specific Checks & Fixes ---
             if mode == 'advanced':
                 # Suggestion 2: Missing or unclean tvg-name
-                # Apply fix if tvg-name is empty OR if the derived suggested_display_name is different from existing tvg-name
-                # AND the existing tvg-name is deemed 'unclean' (e.g., too long, contains descriptive phrases)
+                # Use the 'tvg_name_from_attrs' for comparison, as that's the actual current attribute value.
                 is_tvg_name_unclean = (
-                    len(tvg_name) > 50 or # Arbitrary length threshold
-                    re.search(r'\s+(HD|SD|Live|TV|Channel|Show|Movie|Series|Now)\s*$', tvg_name, flags=re.IGNORECASE) or # Ends with common descriptive terms
-                    ',' in tvg_name or # Contains internal comma (often separates name from description)
-                    '(' in tvg_name or '[' in tvg_name # Contains parentheses/brackets (often contain descriptions)
+                    len(tvg_name_from_attrs) > 50 or # Arbitrary length threshold
+                    re.search(r'\s+(HD|SD|Live|TV|Channel|Show|Movie|Series|Now)\s*$', tvg_name_from_attrs, flags=re.IGNORECASE) or
+                    ',' in tvg_name_from_attrs or
+                    '(' in tvg_name_from_attrs or '[' in tvg_name_from_attrs
                 )
 
-                if not tvg_name or (tvg_name != suggested_display_name and is_tvg_name_unclean):
+                if not tvg_name_from_attrs or (tvg_name_from_attrs != suggested_display_name and is_tvg_name_unclean):
                     current_line_attributes['tvg-name'] = suggested_display_name
                     modified_attributes_for_fix = True
-                    if not tvg_name:
+                    if not tvg_name_from_attrs:
                          errors.append(f"M3U Channels DVR Warning: Channel '{raw_channel_name}' (Line {line_num_display}) is missing 'tvg-name'. Channels DVR often uses this for display. Suggesting fix: Add tvg-name='{suggested_display_name}'.")
                     else:
-                         errors.append(f"M3U Channels DVR Warning: Channel '{raw_channel_name}' (Line {line_num_display}) has an unclean 'tvg-name' attribute. Suggesting fix: Change tvg-name='{tvg_name}' to '{suggested_display_name}'.")
+                         errors.append(f"M3U Channels DVR Warning: Channel '{raw_channel_name}' (Line {line_num_display}) has an unclean 'tvg-name' attribute ('{tvg_name_from_attrs}'). Suggesting fix: Change tvg-name to '{suggested_display_name}'.")
 
                 # Suggestion 3: Missing group-title
                 if not group_title:
